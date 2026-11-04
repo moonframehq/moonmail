@@ -111,7 +111,7 @@ local function header_field(label, value)
 end
 
 return mod {
-	window = { size = { width = 1500, height = 940 } },
+	window = { size = { width = 1500, height = 940 }, titlebar = "hidden", traffic_lights = { x = 20, y = 20 } },
 	about = { version = "0.1", description = "Local-first mail, with Correspondence." },
 	menus = {
 		{ title = "Mail", items = {
@@ -230,7 +230,8 @@ return mod {
 			} else ui.column { class = "form", ui.text { "No message selected", tone = "muted" } }
 		end
 		return ui.column { grow = true, gap = "none",
-			ui.row { class = "toolbar", height = 46, shrink = false, align = "center",
+			ui.row { class = "toolbar", height = 46, shrink = false, align = "center", drag = true,
+				ui.row { width = 90, shrink = false },
 				tool("chevron-up", "Previous message · ⌘↑", { action = "move", value = "up" }, "provider:mail"),
 				tool("chevron-down", "Next message · ⌘↓", { action = "move", value = "down" }, "provider:mail"),
 				tool("square-pen", "Compose · ⌘N", "compose"),

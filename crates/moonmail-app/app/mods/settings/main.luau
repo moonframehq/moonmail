@@ -186,10 +186,16 @@ return mod {
 			)
 		end
 		return ui.row { class = "mm-settings-window", grow = true, gap = "none",
-			ui.column { width = 224, shrink = false, class = "mm-settings-sidebar", table.unpack(nav) },
-			ui.column { grow = true, gap = "none",
-				ui.row { class = "mm-toolbar", height = 52, shrink = false, align = "center", drag = true, ui.text { title, class = "mm-page-title" } },
-				content, if mail.error and mail.error ~= "" and not state.add_account then ui.text { mail.error, class = "error" } else nil },
+			ui.hsplit { id = "settings-sidebar", divider = false,
+				ui.pane { size = 224, min = 200, max = 340, fixed = true,
+					ui.column { grow = true, class = "mm-settings-sidebar", table.unpack(nav) },
+				},
+				ui.pane { min = 540,
+					ui.column { grow = true, gap = "none",
+						ui.row { class = "mm-toolbar", height = 52, shrink = false, align = "center", drag = true, ui.text { title, class = "mm-page-title" } },
+						content, if mail.error and mail.error ~= "" and not state.add_account then ui.text { mail.error, class = "error" } else nil },
+				},
+			},
 		}
 	end,
 	styles = {
