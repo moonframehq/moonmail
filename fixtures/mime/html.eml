@@ -1,0 +1,7 @@
+From: alice@example.com
+To: bob@example.org
+Subject: HTML-only message
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+<p>Actual HTML body.</p>

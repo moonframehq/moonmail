@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024" role="img" aria-label="Moonmail: orbit">
+<title>Moonmail: orbit</title>
+<!-- A paper plane flying a tilted dotted orbit around Moonframe's striped retro moon. Render with `just icon`. -->
+  <defs><clipPath id="t5"><rect x="100" y="100" width="824" height="824" rx="185"/></clipPath>
+  <filter id="st5" x="-10%" y="-10%" width="120%" height="125%"><feDropShadow dx="0" dy="12" stdDeviation="14" flood-color="#000" flood-opacity=".35"/></filter></defs>
+  <rect x="100" y="100" width="824" height="824" rx="185" fill="#3b2417" filter="url(#st5)"/>
+  <g clip-path="url(#t5)"><circle cx="512" cy="512" r="304" fill="#2e6462"/>
+   <g transform="rotate(-18 512 512)"><path d="M262 512 A250 84 0 0 1 762 512" fill="none" stroke="#f6e7c8" stroke-width="14" stroke-dasharray="1 30" stroke-linecap="round" opacity=".6"/></g>
+   <clipPath id="m4"><circle cx="512" cy="512" r="140"/></clipPath>
+  <g clip-path="url(#m4)">
+   <rect x="372" y="372" width="280" height="126" fill="#f2b33d"/>
+   <rect x="372" y="498" width="280" height="63" fill="#e8642c"/>
+   <rect x="372" y="561" width="280" height="91" fill="#c63d26"/>
+   <rect x="372" y="491" width="280" height="12.6" fill="#2e6462"/>
+   <rect x="372" y="547" width="280" height="12.6" fill="#2e6462"/>
+   <rect x="372" y="598.8" width="280" height="12.6" fill="#2e6462"/>
+  </g>
+   <g transform="rotate(-18 512 512)"><path d="M644.5 583.2 A250 84 0 0 1 277.1 540.7" fill="none" stroke="#f6e7c8" stroke-width="16" stroke-dasharray="1 30" stroke-linecap="round"/></g>
+   <g transform="translate(724 500) rotate(-40) scale(0.85)">
+   <path d="M0 0 L-150 -44 L-108 0 Z" fill="#f6e7c8"/>
+   <path d="M0 0 L-108 0 L-150 44 Z" fill="#d9c399"/></g>
+  <circle cx="512" cy="512" r="304" fill="none" stroke="#f6e7c8" stroke-width="18"/></g></svg>

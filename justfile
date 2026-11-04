@@ -1,0 +1,61 @@
+nightly_toolchain := "nightly-2026-06-20"
+
+default:
+    @just --list
+
+run *args:
+    cargo run --locked -p moonmail-app -- {{args}}
+
+demo:
+    MOONMAIL_DEMO=1 cargo run --locked -p moonmail-app
+
+build:
+    cargo build --locked -p moonmail-app --release
+
+check:
+    cargo run --locked -p moonmail-app -- --check --no-user
+
+# Capture the real GPUI layout with isolated demo data; excludes native WebKit.
+screenshot output="target/screenshots/moonmail.png" view="mail":
+    cargo build --locked -p moonmail-app --features capture
+    python3 scripts/capture.py {{quote(output)}} {{quote(view)}}
+
+login email:
+    cargo run --locked -p moonmail-app -- login {{quote(email)}}
+
+password email:
+    cargo run --locked -p moonmail-app -- password {{quote(email)}}
+
+sync:
+    cargo run --locked -p moonmail-app -- sync
+
+import path:
+    cargo run --locked -p moonmail-app -- import {{quote(path)}}
+
+reindex:
+    cargo run --locked -p moonmail-app -- reindex
+
+# Render the app icons: 1024 px for the Dock and bundles, small previews for Settings.
+icon:
+    for name in wax-seal moon-at orbit; do \
+        rsvg-convert -w 1024 -h 1024 assets/icons/$name.svg -o crates/moonmail-app/icons/$name.png && \
+        rsvg-convert -w 160 -h 160 assets/icons/$name.svg -o crates/moonmail-app/app/mods/settings/icons/$name.png || exit; \
+    done
+
+format:
+    cargo +{{nightly_toolchain}} fmt --all
+    taplo fmt
+
+format-check:
+    cargo +{{nightly_toolchain}} fmt --all -- --check
+    taplo fmt --check
+
+ci: format-check
+    cargo clippy --locked --workspace --all-targets -- -D warnings
+    cargo test --locked --workspace
+
+bench *args:
+    cargo bench --locked -p moonmail-bench --bench backends -- {{args}}
+
+bench-check:
+    cargo bench --locked -p moonmail-bench --bench backends -- --test

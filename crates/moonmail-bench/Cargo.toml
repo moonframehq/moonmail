@@ -1,0 +1,22 @@
+[package]
+edition.workspace      = true
+name                   = "moonmail-bench"
+publish.workspace      = true
+rust-version.workspace = true
+version.workspace      = true
+
+[dependencies]
+moonmail-core.workspace = true
+
+[dev-dependencies]
+criterion.workspace       = true
+moonmail-mime.workspace   = true
+moonmail-search.workspace = true
+tempfile.workspace        = true
+
+[[bench]]
+harness = false
+name    = "backends"
+
+[lints]
+workspace = true

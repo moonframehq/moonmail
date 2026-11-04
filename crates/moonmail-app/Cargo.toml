@@ -1,0 +1,38 @@
+[package]
+default-run            = "moonmail"
+edition.workspace      = true
+name                   = "moonmail-app"
+publish.workspace      = true
+rust-version.workspace = true
+version.workspace      = true
+
+[[bin]]
+name = "moonmail"
+path = "src/main.rs"
+
+[dependencies]
+ammonia.workspace          = true
+anyhow.workspace           = true
+fs2.workspace              = true
+moonframe.workspace        = true
+moonmail-core.workspace    = true
+moonmail-mime.workspace    = true
+moonmail-network.workspace = true
+moonmail-search.workspace  = true
+moonmail-store.workspace   = true
+rpassword.workspace        = true
+serde.workspace            = true
+serde_json.workspace       = true
+tempfile.workspace         = true
+time.workspace             = true
+url.workspace              = true
+uuid.workspace             = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+core-text.workspace = true
+
+[lints]
+workspace = true
+
+[features]
+capture = ["moonframe/capture"]

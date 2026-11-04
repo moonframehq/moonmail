@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024" role="img" aria-label="Moonmail: moon @">
+<title>Moonmail: moon @</title>
+<!-- An @ whose inner "a" holds Moonframe's striped retro moon. Render with `just icon`. -->
+  <defs><clipPath id="t3"><rect x="100" y="100" width="824" height="824" rx="185"/></clipPath>
+  <filter id="st3" x="-10%" y="-10%" width="120%" height="125%"><feDropShadow dx="0" dy="12" stdDeviation="14" flood-color="#000" flood-opacity=".35"/></filter></defs>
+  <rect x="100" y="100" width="824" height="824" rx="185" fill="#3b2417" filter="url(#st3)"/>
+  <g clip-path="url(#t3)"><circle cx="512" cy="512" r="304" fill="#2e6462"/><clipPath id="m2"><circle cx="492" cy="512" r="72"/></clipPath>
+  <g clip-path="url(#m2)">
+   <rect x="420" y="440" width="144" height="64.8" fill="#f2b33d"/>
+   <rect x="420" y="504.8" width="144" height="32.4" fill="#e8642c"/>
+   <rect x="420" y="537.2" width="144" height="46.800000000000004" fill="#c63d26"/>
+   <rect x="420" y="501.2" width="144" height="6.4799999999999995" fill="#2e6462"/>
+   <rect x="420" y="530" width="144" height="6.4799999999999995" fill="#2e6462"/>
+   <rect x="420" y="556.64" width="144" height="6.4799999999999995" fill="#2e6462"/>
+  </g><circle cx="492" cy="512" r="100" fill="none" stroke="#f6e7c8" stroke-width="36"/>
+  <path d="M592 412 V537 C592 617 704 617 704 512
+   A212 212 0 1 0 591.5279713106089 699.1848896860924" fill="none" stroke="#f6e7c8" stroke-width="36" stroke-linecap="round" stroke-linejoin="round"/>
+  </g></svg>

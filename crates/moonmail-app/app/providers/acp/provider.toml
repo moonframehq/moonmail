@@ -1,0 +1,9 @@
+# Keep the provider in Moonmail's app tree so its working directory and
+# live-edit target resolve to this repository, not Moonframe's dependency checkout.
+interval = 0.25
+kind     = "native"
+
+[settings]
+agent    = "claude"
+allow    = { feedback = "read" }
+starters = ["feedback"]

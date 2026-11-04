@@ -1,0 +1,12 @@
+[package]
+edition.workspace      = true
+name                   = "moonmail-core"
+publish.workspace      = true
+rust-version.workspace = true
+version.workspace      = true
+
+[lints]
+workspace = true
+
+[dependencies]
+serde.workspace = true

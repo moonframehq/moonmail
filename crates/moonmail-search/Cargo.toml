@@ -1,0 +1,17 @@
+[package]
+edition.workspace      = true
+name                   = "moonmail-search"
+publish.workspace      = true
+rust-version.workspace = true
+version.workspace      = true
+
+[dependencies]
+moonmail-core.workspace = true
+rusqlite.workspace      = true
+thiserror.workspace     = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

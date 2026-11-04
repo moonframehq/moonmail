@@ -1,0 +1,34 @@
+From: alice@example.com
+To: bob@example.org
+Subject: Alternative bodies and attachments
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary=outer
+
+--outer
+Content-Type: text/plain; charset=utf-8
+Content-Disposition: attachment; filename=notes.txt
+
+This attachment must not become the message body.
+--outer
+Content-Type: multipart/alternative; boundary=inner
+
+--inner
+Content-Type: text/plain; charset=utf-8
+Content-Transfer-Encoding: base64
+
+UGxhaW4gYWx0ZXJuYXRpdmUu
+--inner
+Content-Type: text/html; charset=utf-8
+
+<p>HTML alternative.</p>
+--inner--
+--outer
+Content-Type: message/rfc822
+Content-Disposition: attachment; filename=forwarded.eml
+
+From: other@example.net
+Subject: Attached message
+Content-Type: text/plain
+
+Attached message body must not replace the outer body.
+--outer--

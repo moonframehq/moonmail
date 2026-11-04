@@ -1,0 +1,8 @@
+From: Alice <alice@example.com>
+To: Team: Bob <bob@example.org>, carol@example.net;
+Cc: Dave <dave@example.com>
+Subject: Quarterly review
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+Discuss the quarterly review.

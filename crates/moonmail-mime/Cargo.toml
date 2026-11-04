@@ -1,0 +1,15 @@
+[package]
+edition.workspace      = true
+name                   = "moonmail-mime"
+publish.workspace      = true
+rust-version.workspace = true
+version.workspace      = true
+
+[dependencies]
+mail-parser.workspace   = true
+mailparse.workspace     = true
+moonmail-core.workspace = true
+thiserror.workspace     = true
+
+[lints]
+workspace = true
