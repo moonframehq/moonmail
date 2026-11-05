@@ -7,6 +7,7 @@ pub fn seed_demo(
     archive: &mut Archive,
     blobs: &FileBlobs,
 ) -> Result<(), IngestError<StalwartError, BlobError>> {
+    let account = "you@example.com";
     for name in [
         "Projects",
         "Projects/Moonmail",
@@ -16,11 +17,20 @@ pub fn seed_demo(
     ] {
         archive.mailbox("you@example.com", name)?;
     }
+    for (name, role) in [
+        ("INBOX", moonmail_core::MailboxRole::Inbox),
+        ("Archive", moonmail_core::MailboxRole::Archive),
+        ("Sent", moonmail_core::MailboxRole::Sent),
+        ("Junk", moonmail_core::MailboxRole::Junk),
+        ("Trash", moonmail_core::MailboxRole::Trash),
+    ] {
+        let id = archive.mailbox(account, name)?;
+        archive.mailbox_server_role(id, Some(role))?;
+    }
     if archive.total()? > 0 {
         return Ok(());
     }
     let parser = StalwartParser::default();
-    let account = "you@example.com";
     let people = [
         ("Clara Jensen", "clara@example.org"),
         ("Julian Park", "julian@example.org"),

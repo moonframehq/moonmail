@@ -1,0 +1,59 @@
+From: Clara <clara@example.org>
+To: you@example.com
+Subject: Synthetic attachment review
+Date: Tue, 03 Nov 2026 20:00:00 +0000
+Message-ID: <attachments@moonmail.test>
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary=outer
+
+--outer
+Content-Type: multipart/alternative; boundary=body
+
+--body
+Content-Type: text/plain; charset=utf-8
+
+These are synthetic files for the attachment workflow.
+--body
+Content-Type: text/html; charset=utf-8
+
+<p>These are synthetic files for the attachment workflow.</p>
+--body--
+--outer
+Content-Type: application/octet-stream
+Content-Disposition: attachment; filename="../../sample.bin"
+Content-Transfer-Encoding: base64
+
+AAECA//+
+--outer
+Content-Type: text/plain; charset=iso-8859-1
+Content-Disposition: attachment; filename*=UTF-8''caf%C3%A9.txt
+Content-Transfer-Encoding: quoted-printable
+
+caf=E9=0D=0A
+--outer
+Content-Type: image/png
+Content-Disposition: inline; filename="preview.png"
+Content-ID: <preview@moonmail.test>
+Content-Transfer-Encoding: base64
+
+iVBORw0KGgo=
+--outer
+Content-Type: message/rfc822
+Content-Disposition: attachment; filename="forwarded.eml"
+
+From: nested@example.org
+To: you@example.com
+Subject: Attached message
+Content-Type: multipart/mixed; boundary=nested
+
+--nested
+Content-Type: text/plain
+
+An attached message, not the outer body.
+--nested
+Content-Type: application/octet-stream
+Content-Disposition: attachment; filename="inner.bin"
+
+Inner payload
+--nested--
+--outer--

@@ -18,5 +18,8 @@ tempfile.workspace      = true
 thiserror.workspace     = true
 time.workspace          = true
 
+[dev-dependencies]
+moonmail-search.workspace = true
+
 [lints]
 workspace = true

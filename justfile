@@ -59,3 +59,18 @@ bench *args:
 
 bench-check:
     cargo bench --locked -p moonmail-bench --bench backends -- --test
+
+# Native daemon; fixed local ports unless --ephemeral-ports is supplied.
+test-maild *args:
+    cargo run --locked -p moonmail-test-maild -- {{args}}
+
+# Starts disposable native listeners automatically; no Docker or credentials.
+test-mail:
+    cargo test --locked -p moonmail-test-maild
+    cargo test --locked -p moonmail-network --test local_mail
+
+test-mail-image:
+    docker build -f docker/test-maild.Dockerfile -t moonmail-test-maild:local .
+
+test-mail-docker: test-mail-image
+    python3 scripts/test_maild_docker.py

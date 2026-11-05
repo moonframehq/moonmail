@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Moonmail · From menu studies</title>
+    <link rel="stylesheet" href="from-picker.css" />
+    <script src="from-picker.js" defer></script>
+  </head>
+  <body>
+    <header class="page-head">
+      <div class="brand">
+        <span class="moon"></span> moonmail
+        <span class="edition">COMPOSER / FROM MENU</span>
+      </div>
+      <div class="heading">
+        <div>
+          <h1>A proper From menu.</h1>
+          <p>
+            Anchored to the sender. Easy to scan. No movement in the message
+            underneath.
+          </p>
+        </div>
+        <button id="theme" class="quiet">Dark appearance</button>
+      </div>
+    </header>
+    <main>
+      <div class="variants">
+        <section class="variant" aria-labelledby="title-a">
+          <div class="variant-heading">
+            <div>
+              <span class="number">01</span>
+              <h2 id="title-a">Compact native</h2>
+              <span class="recommended">Recommended</span>
+            </div>
+            <button class="choose" data-pick="compact">Choose 01 ↗</button>
+          </div>
+          <div class="preview" id="compact"></div>
+          <div class="caption">
+            <h3>Familiar, and out of the way.</h3>
+            <p>
+              A tight menu with a checkmark, full sender addresses, and “Manage
+              identities…” at the bottom. Closest to your reference.
+            </p>
+            <div class="specs">
+              <span>34px rows</span><span>One-line identities</span
+              ><span>Floating menu</span>
+            </div>
+          </div>
+        </section>
+        <section class="variant" aria-labelledby="title-b">
+          <div class="variant-heading">
+            <div>
+              <span class="number">02</span>
+              <h2 id="title-b">Identity picker</h2>
+            </div>
+            <button class="choose" data-pick="detailed">Choose 02 ↗</button>
+          </div>
+          <div class="preview" id="detailed"></div>
+          <div class="caption">
+            <h3>A little more context.</h3>
+            <p>
+              Name and address on separate lines, quiet identity labels, and
+              search for a longer list of aliases. The current sender stays
+              clearly marked.
+            </p>
+            <div class="specs">
+              <span>56px rows</span><span>Searchable</span
+              ><span>Identity labels</span>
+            </div>
+          </div>
+        </section>
+      </div>
+      <section class="single">
+        <div>
+          <span class="eyebrow">THE SINGLE-SENDER CASE</span>
+          <h3>One address? Keep it simple.</h3>
+          <p>
+            Show the address directly, with a quiet way to manage identities.
+          </p>
+        </div>
+        <div class="single-field">
+          <span class="label">From</span
+          ><span
+            >Alex Lane <span class="muted">&lt;alex@example.com&gt;</span></span
+          ><button class="manage-inline" data-demo="Manage identities">
+            Manage…
+          </button>
+        </div>
+      </section>
+      <footer>
+        <span
+          >Interactive design study · synthetic identities · no mail is
+          sent</span
+        ><span
+          >Click From, choose an identity, try ↑ ↓ / Enter / Esc, or switch
+          appearance.</span
+        >
+      </footer>
+      <div id="notice" role="status" aria-live="polite"></div>
+    </main>
+  </body>
+</html>

@@ -1,0 +1,21 @@
+[package]
+edition.workspace      = true
+name                   = "moonmail-test-maild"
+publish.workspace      = true
+rust-version.workspace = true
+version.workspace      = true
+
+[dependencies]
+base64.workspace     = true
+imap-codec.workspace = true
+rcgen.workspace      = true
+rustls.workspace     = true
+serde.workspace      = true
+serde_json.workspace = true
+smtp-proto.workspace = true
+thiserror.workspace  = true
+time.workspace       = true
+uuid.workspace       = true
+
+[lints]
+workspace = true

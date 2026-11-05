@@ -1,12 +1,34 @@
 local fonts = use "settings-fonts"
 local accounts = use "settings-accounts"
+local columns = use "settings-columns"
 
-local DEFAULTS = { interface_family = ".AppleSystemUIFont", list_family = "JetBrains Mono", font_size = "12", reader_family = "Helvetica", reader_size = "12", threaded = false, mark_read = true, app_icon = "wax-seal" }
-local PAGES = { { "appearance", "Appearance", "palette", "#8b5cf6" }, { "fonts", "Fonts", "case-sensitive", "#f28b35" }, { "reading", "Reading & Lists", "list-tree", "#3894ef" }, { "account", "Internet Accounts", "at-sign", "#3478f6" }, { "storage", "Storage", "archive", "#8b929b" } }
+local function microsoft_smtp(email)
+	local domain = string.lower(string.match(email or "", "@(.+)$") or "")
+	return if table.find({ "outlook.com", "hotmail.com", "live.com", "msn.com" }, domain) then "smtp-mail.outlook.com" else "smtp.office365.com"
+end
+
+local function choose_provider(state, provider, account)
+	local editing = account ~= nil
+	state.selected_provider = provider
+	if not account then
+		for _, preset in state.account_presets or {} do if preset.provider == provider then account = preset; break end end
+	end
+	account = account or {}
+	state.server_config = {
+		imap_host = account.imap_host or "", imap_port = tostring(account.imap_port or 993), imap_tls = account.imap_tls or "implicit", imap_username = account.imap_username or "",
+		smtp_host = account.smtp_host or "", smtp_port = tostring(account.smtp_port or 587), smtp_tls = account.smtp_tls or "starttls", smtp_username = account.smtp_username or "",
+		sent_copy = account.sent_copy or "server",
+	}
+	state.server_settings = provider == "other"
+	if provider == "microsoft" and not editing then state.server_config.smtp_host = microsoft_smtp(state.email) end
+end
+
+local DEFAULTS = { interface_family = ".AppleSystemUIFont", list_family = "JetBrains Mono", font_size = "12", reader_family = "Helvetica", reader_size = "12", threaded = false, mark_read = true, sync_minutes = "0", app_icon = "wax-seal" }
+local PAGES = { { "appearance", "Appearance", "palette", "#8b5cf6" }, { "fonts", "Fonts", "case-sensitive", "#f28b35" }, { "reading", "Reading & Lists", "list-tree", "#3894ef" }, { "sync", "Synchronization", "refresh-cw", "#3894ef" }, { "account", "Internet Accounts", "at-sign", "#3478f6" }, { "storage", "Storage", "archive", "#8b929b" } }
 local function values(p)
 	p = p or {}
 	return { interface_family = p.interface_family or DEFAULTS.interface_family, list_family = p.list_family or DEFAULTS.list_family,
-		font_size = tostring(p.font_size or 12), reader_family = (p.reader or {}).family or "Helvetica", reader_size = tostring((p.reader or {}).size or 12), threaded = p.threaded == true, mark_read = p.mark_read ~= false, app_icon = p.app_icon or DEFAULTS.app_icon }
+		font_size = tostring(p.font_size or 12), reader_family = (p.reader or {}).family or "Helvetica", reader_size = tostring((p.reader or {}).size or 12), threaded = p.threaded == true, mark_read = p.mark_read ~= false, sync_minutes = tostring(p.sync_minutes or 0), app_icon = p.app_icon or DEFAULTS.app_icon }
 end
 local function preview(state)
 	local size = if state.font_target == "reader_family" then state.values.reader_size else state.values.font_size
@@ -74,6 +96,7 @@ return mod {
 	init = function() return { page = "appearance", values = table.clone(DEFAULTS), dirty = false, saved = false, email = "", font_target = "list_family", font_search = "", add_account = false, provider_list = false, selected_provider = nil, lookup_pending = false, signing_in = false } end,
 	update = function(state, msg)
 		if msg == "open" then return state, { { to = "app:window", msg = { open = "settings" } } }
+		elseif msg == "open-accounts" then state.page = "account"; return state, { { to = "app:window", msg = { open = "settings" } } }
 		elseif msg == "close" then return state, { { to = "app:window", msg = { close = "settings" } } }
 		elseif msg == "defaults" then
 			state.values = table.clone(DEFAULTS)
@@ -87,19 +110,25 @@ return mod {
 			return save(state)
 		elseif msg == "add-account" then
 			state.add_account = true; state.provider_list = false; state.selected_provider = nil; state.manual_provider = false; state.email = ""; state.lookup_pending = false; state.lookup_note = nil; state.signing_in = false
+			state.server_settings = false; state.server_config = nil; state.editing_account = false
 		elseif msg == "cancel-account" then state.add_account = false; state.lookup_pending = false
 		elseif msg == "provider-list" then state.provider_list = not state.provider_list
 		elseif msg == "discover-account" then
 			if not string.match(state.email, "^[^%s@]+@[^%s@]+%.[^%s@]+$") then state.lookup_note = "Enter a valid email address."; return end
 			state.lookup_pending = true; state.lookup_note = nil; state.selected_provider = nil; state.manual_provider = false
 			return state, { { to = "provider:mail", msg = { action = "account_discover", email = state.email } } }
-		elseif msg == "connect-account" then
-			if state.selected_provider ~= "fastmail" or not string.match(state.email, "^[^%s@]+@[^%s@]+%.[^%s@]+$") then return end
+		elseif msg == "server-settings" then state.server_settings = not state.server_settings
+		elseif msg == "import-oauth-client" then
+			return state, { { to = "app:pick", msg = { kind = "open", multiple = false, prompt = "Import desktop OAuth client JSON", reply = { action = "oauth_client_import", provider = state.selected_provider } } } }
+		elseif msg == "connect-account" or msg == "connect-password" then
+			if not state.selected_provider or state.signing_in or not string.match(state.email, "^[^%s@]+@[^%s@]+%.[^%s@]+$") then return end
+			if msg == "connect-account" and not table.find({ "fastmail", "google", "microsoft" }, state.selected_provider) then return end
 			state.signing_in = true
-			return state, { { to = "provider:mail", msg = { action = "login", email = state.email } } }
+			return state, { { to = "provider:mail", msg = { action = if msg == "connect-password" then "account_password" else "login", email = state.email, provider = state.selected_provider, config = state.server_config } } }
 		elseif type(msg) == "table" then
 			if msg.topic == "provider/mail" then
 				local mail = msg.value or {}
+				state.account_presets = mail.account_presets or {}
 				state.stored = values(mail.preferences)
 				if state.saved and mail.status == "Settings saved" and mail.error == "" then state.dirty = false; state.saved = false
 				elseif state.saved and mail.error and mail.error ~= "" then state.saved = false
@@ -107,7 +136,7 @@ return mod {
 				if state.lookup_pending and not mail.discovering then
 					local found = mail.discovery
 					if found and found.email == state.email then
-						state.selected_provider = if found.provider ~= "unknown" then found.provider else nil
+						choose_provider(state, if found.provider ~= "unknown" then found.provider else nil)
 						state.provider_list = found.provider == "unknown"
 						state.lookup_note = if found.provider == "unknown" then "We couldn’t identify this provider. Choose one below." else "Identified from " .. found.source .. "."
 					elseif mail.discovery_error and mail.discovery_error ~= "" then state.lookup_note = mail.discovery_error
@@ -116,8 +145,19 @@ return mod {
 				end
 				if state.signing_in and not mail.busy then
 					state.signing_in = false
-					if mail.account == state.email and mail.error == "" then state.add_account = false end
+					if table.find(mail.accounts or {}, state.email) and mail.error == "" then state.add_account = false end
 				end
+			elseif msg.action == "oauth_client_import" and not msg.cancelled then
+				return state, { { to = "provider:mail", msg = msg } }
+			elseif msg.edit_account then
+				state.add_account = true; state.editing_account = true; state.email = msg.edit_account.email; state.provider_list = false; state.lookup_pending = false; state.lookup_note = nil
+				choose_provider(state, msg.edit_account.provider, msg.edit_account)
+			elseif msg.account_field and state.server_config then
+				if state.server_config[msg.account_field] ~= nil then state.server_config[msg.account_field] = msg.value end
+			elseif msg.account_tls and state.server_config then
+				local key = msg.account_tls .. "_tls"
+				state.server_config[key] = msg.value
+				state.server_config[msg.account_tls .. "_port"] = if msg.account_tls == "imap" then (if msg.value == "implicit" then "993" else "143") else (if msg.value == "implicit" then "465" else "587")
 			elseif msg.page then
 				-- Leaving Fonts drops a selection that was only being previewed.
 				if state.page == "fonts" and msg.page ~= "fonts" and state.dirty and not state.saved and state.stored then state.values = table.clone(state.stored); state.dirty = false end
@@ -130,13 +170,15 @@ return mod {
 				local field = if reader then "reader_size" else "font_size"
 				state.values[field] = tostring(math.clamp((tonumber(state.values[field]) or 12) + msg.font_step, if reader then 8 else 10, if reader then 32 else 16))
 				state.dirty = true; return state, { preview(state) }
-			elseif msg.provider then state.selected_provider = msg.provider; state.manual_provider = true; state.provider_list = false; state.lookup_note = nil; state.lookup_pending = false
+			elseif msg.provider then choose_provider(state, msg.provider); state.manual_provider = true; state.provider_list = false; state.lookup_note = nil; state.lookup_pending = false
 			elseif msg.field then state.values[msg.field] = msg.value; return save(state)
 			elseif msg.app_icon then state.values.app_icon = msg.app_icon; return save(state)
+			elseif msg.sync_minutes then state.values.sync_minutes = msg.sync_minutes; return save(state)
 			elseif msg.toggle then state.values[msg.toggle] = not state.values[msg.toggle]; return save(state)
 			elseif msg.msg == "font-search" then state.font_search = msg.value
 			elseif msg.msg == "email" then
 				state.email = string.gsub(msg.value, "^%s*(.-)%s*$", "%1")
+				if state.selected_provider == "microsoft" and state.server_config then state.server_config.smtp_host = microsoft_smtp(state.email) end
 				if not state.manual_provider then state.selected_provider = nil end
 				state.lookup_note = nil; state.lookup_pending = false
 			end
@@ -177,7 +219,20 @@ return mod {
 					hairline(),
 					row("Mark messages as read", "When you open a message in the reader.", switch(v.mark_read, { toggle = "mark_read" }))
 				),
-				caption("Click From, Subject or Date to sort; click again to reverse. Expanded threads show up to 100 matching messages.")
+				caption("Click From, Subject or Date to sort; click again to reverse. Expanded threads page through all matching messages with First / Next 100."),
+				columns { mail = mail }
+			)
+		elseif state.page == "sync" then
+			local choices = {}
+			for _, option in { { "0", "Manual" }, { "1", "1 min" }, { "5", "5 min" }, { "15", "15 min" }, { "30", "30 min" } } do
+				table.insert(choices, ui.button { label = option[2], small = true, variant = if v.sync_minutes == option[1] then "primary" else nil, msg = { sync_minutes = option[1] } })
+			end
+			content = page(
+				group(row("Check for new mail", "Runs while Moonmail is open.", nil), ui.row { padding = "normal", shrink = false, table.unpack(choices) }),
+				caption(mail.sync_schedule or "Manual sync"),
+				caption("Transient connection failures reconnect after 30 seconds, doubling up to 15 minutes. Authentication, storage and incomplete-sync errors pause automatic sync until you use Sync."),
+				caption("Stop Sync waits for the current command and pauses automatic sync. Queued messages require an explicit Send."),
+				ui.row { action("Sync now", "sync"), action("Stop Sync", "cancel_sync") }
 			)
 		else
 			content = page(

@@ -10,23 +10,33 @@ use {
 
 #[derive(Debug, thiserror::Error)]
 pub enum BlobError {
-    #[error("raw message storage failed")]
+    #[error("blob storage failed")]
     Io(#[from] std::io::Error),
-    #[error("invalid raw message hash")]
+    #[error("invalid blob hash")]
     InvalidHash,
-    #[error("raw message failed its SHA-256 integrity check")]
+    #[error("blob failed its SHA-256 integrity check")]
     Integrity,
 }
 
 #[derive(Clone)]
 pub struct FileBlobs {
     root: PathBuf,
+    extension: &'static str,
 }
 
 impl FileBlobs {
     pub fn new(root: impl AsRef<Path>) -> Self {
         Self {
             root: root.as_ref().join("messages"),
+            extension: "eml",
+        }
+    }
+
+    /// Draft files are immutable too, but use a separate namespace from MIME.
+    pub fn attachments(root: impl AsRef<Path>) -> Self {
+        Self {
+            root: root.as_ref().join("attachments"),
+            extension: "bin",
         }
     }
 
@@ -34,7 +44,10 @@ impl FileBlobs {
         if hash.len() != 64 || !hash.bytes().all(|byte| byte.is_ascii_hexdigit()) {
             return Err(BlobError::InvalidHash);
         }
-        Ok(self.root.join(&hash[..2]).join(format!("{hash}.eml")))
+        Ok(self
+            .root
+            .join(&hash[..2])
+            .join(format!("{hash}.{}", self.extension)))
     }
 }
 
@@ -64,6 +77,9 @@ impl BlobStore for FileBlobs {
         {
             fs::File::open(parent)?.sync_all()?;
             fs::File::open(&self.root)?.sync_all()?;
+            // Also persist a newly created messages/attachments namespace before
+            // metadata can commit a reference to its first blob.
+            fs::File::open(self.root.parent().ok_or(BlobError::InvalidHash)?)?.sync_all()?;
         }
         Ok(hash)
     }

@@ -46,7 +46,10 @@ pub struct Preferences {
     pub reader: ReaderFont,
     pub threaded: bool,
     pub mark_read: bool,
+    /// Zero is manual; automatic synchronization only runs while the app is open.
+    pub sync_minutes: u16,
     pub app_icon: crate::app_icon::AppIcon,
+    pub columns: crate::columns::Columns,
 }
 
 impl Default for Preferences {
@@ -58,7 +61,9 @@ impl Default for Preferences {
             reader: ReaderFont::default(),
             threaded: false,
             mark_read: true,
+            sync_minutes: 0,
             app_icon: crate::app_icon::AppIcon::default(),
+            columns: crate::columns::Columns::default(),
         }
     }
 }
@@ -76,6 +81,11 @@ impl Preferences {
         }
     }
     pub fn validate(&self) -> Result<()> {
+        self.columns.validate()?;
+        anyhow::ensure!(
+            matches!(self.sync_minutes, 0 | 1 | 5 | 15 | 30),
+            "Choose manual sync or 1, 5, 15, or 30 minutes"
+        );
         for family in [&self.interface_family, &self.list_family] {
             anyhow::ensure!(
                 !family.trim().is_empty()

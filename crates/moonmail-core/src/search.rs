@@ -50,4 +50,24 @@ pub trait SearchIndex {
     fn apply(&mut self, changes: &[IndexChange<'_>]) -> Result<(), Self::Error>;
 
     fn search(&self, query: SearchQuery<'_>) -> Result<Vec<MessageId>, Self::Error>;
+
+    /// Visit every match from one committed projection snapshot, in ascending ID
+    /// order, without a relevance/result cap. Phrase semantics match `search`.
+    /// Stop immediately when the visitor returns false. Implementations stream
+    /// IDs rather than retaining the complete result in memory; callbacks must
+    /// not reenter this instance. Used to apply metadata scope before page limits.
+    fn visit_matches(
+        &self,
+        phrases: &[&str],
+        visitor: impl FnMut(MessageId) -> bool,
+    ) -> Result<(), Self::Error>;
+
+    /// Stream (term index, message ID) for each literal term from one committed
+    /// projection snapshot. Unique IDs per term, ascending term index then ID;
+    /// false stops all visitation. No global result cap. Empty terms match none.
+    fn visit_terms(
+        &self,
+        terms: &[crate::TextTerm],
+        visitor: impl FnMut(usize, MessageId) -> bool,
+    ) -> Result<(), Self::Error>;
 }

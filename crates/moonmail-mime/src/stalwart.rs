@@ -38,6 +38,7 @@ impl MimeParser for StalwartParser {
                 .map(str::to_owned),
             subject: message.subject().map(str::to_owned),
             from: addresses(message.from()),
+            reply_to: addresses(message.reply_to()),
             to: addresses(message.to()),
             cc: addresses(message.cc()),
             text_body: message

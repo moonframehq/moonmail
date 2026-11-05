@@ -28,6 +28,7 @@ impl MimeParser for MailparseParser {
             in_reply_to: message_ids(&message, "In-Reply-To").into_iter().next(),
             subject: message.headers.get_first_value("Subject"),
             from: addresses(&message, "From")?,
+            reply_to: addresses(&message, "Reply-To")?,
             to: addresses(&message, "To")?,
             cc: addresses(&message, "Cc")?,
             ..ParsedMessage::default()

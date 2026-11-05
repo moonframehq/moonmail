@@ -25,3 +25,11 @@ pub enum IngestError<P: std::error::Error + 'static, B: std::error::Error + 'sta
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
+
+#[derive(Debug, thiserror::Error)]
+pub enum SearchError<E: std::error::Error + 'static> {
+    #[error("could not enumerate search matches")]
+    Index(#[source] E),
+    #[error(transparent)]
+    Store(#[from] Error),
+}

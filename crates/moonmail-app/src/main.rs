@@ -1,11 +1,15 @@
 mod account_setup;
 mod app_icon;
 mod cli;
+mod columns;
+mod file_export;
 mod fonts;
 mod local;
 mod navigation;
 mod page;
 mod provider;
+mod reader_resources;
+mod sync_schedule;
 
 use {
     anyhow::Result,
@@ -47,6 +51,9 @@ fn run() -> Result<ExitCode> {
     })?;
     let archive = moonmail_store::Archive::open(&root)?;
     archive.recover_interrupted_sends()?;
+    archive.recover_interrupted_sent_copies()?;
+    archive.recover_interrupted_moves()?;
+    archive.recover_interrupted_folders()?;
     drop(archive);
     if cli::dispatch(&root, &args)? {
         return Ok(ExitCode::SUCCESS);

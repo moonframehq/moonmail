@@ -1,12 +1,16 @@
 use {
     crate::{Error, IngestError, Result},
-    moonmail_core::{BlobStore, MessageId, MimeParser, ParsedMessage, SearchDocument},
+    moonmail_core::{
+        BlobStore, MessageId, MimeParser, ParsedMessage, ReplyAddresses, SearchDocument,
+    },
     rusqlite::{Connection, OptionalExtension, params},
     std::{path::Path, time::Duration},
 };
 
 pub struct Archive {
     pub(crate) connection: Connection,
+    pub(crate) search_prepared: bool,
+    pub(crate) search_predicate: Option<crate::predicates::CompiledPredicate>,
 }
 
 pub struct IncomingMessage<'a> {
@@ -17,6 +21,8 @@ pub struct IncomingMessage<'a> {
     pub uid: Option<u32>,
     pub seen: bool,
     pub starred: bool,
+    /// Source timestamp; IMAP uses INTERNALDATE. Zero for a local import with no
+    /// known source timestamp remains unknown in received_at metadata.
     pub received_at: i64,
     pub raw: &'a [u8],
 }
@@ -40,7 +46,7 @@ impl Archive {
             transaction.pragma_query_value(None, "user_version", |row| row.get(0))?;
         match version {
             0 => transaction.execute_batch(include_str!("schema.sql"))?,
-            1 | 2 => {},
+            1..=20 => {},
             version => return Err(Error::Schema(version)),
         }
         if version < 2 {
@@ -52,13 +58,89 @@ impl Archive {
              PRAGMA user_version=2;",
             )?;
         }
+        if version < 3 {
+            // Projection semantics changed: include Cc and sender display names.
+            // Replay is durable/resumable and is acknowledged only after the
+            // separate search database commits each bounded batch.
+            transaction.execute_batch(
+                "UPDATE projection SET cursor=0 WHERE name='search';
+                 PRAGMA user_version=3;",
+            )?;
+        }
+        if version < 4 {
+            transaction.execute_batch(
+                "ALTER TABLE mailboxes ADD COLUMN active INTEGER NOT NULL DEFAULT 1;
+                 ALTER TABLE messages ADD COLUMN references_json TEXT;
+                 ALTER TABLE messages ADD COLUMN in_reply_to TEXT;
+                 ALTER TABLE drafts ADD COLUMN references_json TEXT NOT NULL DEFAULT '[]';
+                 PRAGMA user_version=4;",
+            )?;
+        }
+        if version < 5 {
+            transaction.execute_batch(include_str!("management.sql"))?;
+        }
+        if version < 6 {
+            transaction.execute_batch(include_str!("composition.sql"))?;
+        }
+        if version < 7 {
+            transaction.execute_batch(include_str!("attachments.sql"))?;
+        }
+        if version < 8 {
+            transaction.execute_batch(include_str!("outbox.sql"))?;
+        }
+        if version < 9 {
+            transaction.execute_batch(include_str!("sent.sql"))?;
+        }
+        if version < 10 {
+            transaction.execute_batch(include_str!("identities.sql"))?;
+        }
+        if version < 11 {
+            transaction.execute_batch(include_str!("dates.sql"))?;
+        }
+        if version < 12 {
+            transaction.execute_batch(include_str!("saved_searches.sql"))?;
+        }
+        if version < 13 {
+            transaction.execute_batch(include_str!("search_sources.sql"))?;
+        }
+        if version < 14 {
+            transaction.execute_batch(include_str!("thread_graph.sql"))?;
+        }
+        if version < 15 {
+            transaction.execute_batch(include_str!("folder_operations.sql"))?;
+        }
+        if version < 16 {
+            transaction.execute_batch(include_str!("copies.sql"))?;
+        }
+        if version < 17 {
+            transaction.execute_batch(include_str!("keywords.sql"))?;
+        }
+        if version < 18 {
+            transaction.execute_batch(include_str!("rules.sql"))?;
+        }
+        if version < 19 {
+            transaction.execute_batch(include_str!("partitions.sql"))?;
+        }
+        if version < 20 {
+            transaction.execute_batch(include_str!("sent_copy.sql"))?;
+        }
         transaction.commit()?;
-        Ok(Self { connection })
+        connection.execute_batch(
+            "PRAGMA temp_store=FILE;
+             PRAGMA temp.cache_size=-2048;
+             CREATE TEMP TABLE search_matches(id INTEGER PRIMARY KEY);",
+        )?;
+        crate::thread_graph::backfill(&mut connection)?;
+        Ok(Self {
+            connection,
+            search_prepared: false,
+            search_predicate: None,
+        })
     }
 
     pub fn mailbox(&self, account: &str, name: &str) -> Result<i64> {
         self.connection.execute(
-            "INSERT INTO mailboxes(account,name) VALUES (?1,?2) ON CONFLICT DO NOTHING",
+            "INSERT INTO mailboxes(account,name) VALUES (?1,?2) ON CONFLICT(account,name) DO UPDATE SET active=1",
             params![account, name],
         )?;
         Ok(self.connection.query_row(
@@ -87,12 +169,25 @@ impl Archive {
         blobs: &B,
         incoming: IncomingMessage<'_>,
     ) -> std::result::Result<MessageId, IngestError<P::Error, B::Error>> {
+        self.ingest_with_keywords(parser, blobs, incoming, &[])
+    }
+
+    /// Publish bytes, metadata and the complete occurrence keyword set atomically.
+    /// Pending local keyword edits override the incoming observation.
+    pub fn ingest_with_keywords<P: MimeParser, B: BlobStore>(
+        &mut self,
+        parser: &P,
+        blobs: &B,
+        incoming: IncomingMessage<'_>,
+        keywords: &[String],
+    ) -> std::result::Result<MessageId, IngestError<P::Error, B::Error>> {
+        let keywords = crate::keywords::normalize(keywords)?;
         if incoming.raw.len() > 64 * 1024 * 1024 {
             return Err(Error::Invalid("message exceeds 64 MiB limit").into());
         }
         let parsed = parser.parse(incoming.raw).map_err(IngestError::Parser)?;
         let hash = blobs.put(incoming.raw).map_err(IngestError::Blob)?;
-        self.insert_parsed(incoming, parsed, &hash)
+        self.insert_parsed(incoming, parsed, &hash, &keywords)
             .map_err(IngestError::Store)
     }
 
@@ -101,6 +196,7 @@ impl Archive {
         incoming: IncomingMessage<'_>,
         parsed: ParsedMessage,
         hash: &str,
+        keywords: &[String],
     ) -> Result<MessageId> {
         let text = parsed.text_body.clone().unwrap_or_else(|| {
             parsed
@@ -151,8 +247,8 @@ impl Archive {
             id
         } else {
             transaction.execute(
-                "INSERT INTO messages(account,origin,blob,subject,sender,address,recipients,date,snippet,rfc_id,thread_key) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)",
-                params![incoming.account,incoming.origin,hash,parsed.subject.as_deref().unwrap_or("(No subject)"),sender,address,recipients,parsed.date.unwrap_or(incoming.received_at),snippet,parsed.message_id,thread_key],
+                "INSERT INTO messages(account,origin,blob,subject,sender,address,recipients,date,snippet,rfc_id,thread_key,references_json,in_reply_to,reply_addresses_json,header_date,received_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16)",
+                params![incoming.account,incoming.origin,hash,parsed.subject.as_deref().unwrap_or("(No subject)"),sender,address,recipients,parsed.date.unwrap_or(incoming.received_at),snippet,parsed.message_id,thread_key,serde_json::to_string(&parsed.references)?,parsed.in_reply_to,serde_json::to_string(&ReplyAddresses::from(&parsed))?,parsed.date,if incoming.uid.is_some() || incoming.received_at !=0 {Some(incoming.received_at)} else {None}],
             )?;
             let id = transaction.last_insert_rowid();
             transaction.execute(
@@ -172,16 +268,32 @@ impl Archive {
                 }
             }
             transaction.execute("INSERT INTO changes(message_id) VALUES (?1)", [id])?;
+            crate::thread_graph::update(&transaction, id)?;
             id
         };
+        let present: bool = transaction.query_row(
+            "SELECT EXISTS(SELECT 1 FROM occurrences WHERE mailbox_id=?1 AND message_id=?2)",
+            params![incoming.mailbox, id],
+            |r| r.get(0),
+        )?;
         transaction.execute("INSERT INTO occurrences(mailbox_id,message_id,epoch,uid,seen,flagged) VALUES (?1,?2,?3,?4,?5,?6) ON CONFLICT(mailbox_id,message_id) DO UPDATE SET seen=excluded.seen,flagged=excluded.flagged", params![incoming.mailbox,id,incoming.epoch,incoming.uid,incoming.seen,incoming.starred])?;
+        if !present || incoming.uid.is_some() {
+            crate::keywords::replace_observed(&transaction, incoming.mailbox, id, keywords)?;
+        }
+        if !present {
+            crate::rules::on_entry(&transaction, incoming.mailbox, MessageId(id as u64))?;
+        }
         transaction.commit()?;
         Ok(MessageId(id as u64))
     }
 
     pub fn index_work(&self, limit: usize) -> Result<Vec<IndexWork>> {
         let mut statement = self.connection.prepare_cached(
-            "SELECT c.seq,m.id,m.subject,b.text,m.address,m.recipients FROM changes c JOIN messages m ON m.id=c.message_id JOIN bodies b ON b.message_id=m.id WHERE c.seq>(SELECT cursor FROM projection WHERE name='search') ORDER BY c.seq LIMIT ?1"
+            "SELECT c.seq,m.id,m.subject,b.text,m.sender || ' ' || m.address,m.recipients,
+             COALESCE((SELECT group_concat(address,' ') FROM
+                 (SELECT address FROM addresses WHERE message_id=m.id AND role='cc' ORDER BY address)), '')
+             FROM changes c JOIN messages m ON m.id=c.message_id JOIN bodies b ON b.message_id=m.id
+             WHERE c.seq>(SELECT cursor FROM projection WHERE name='search') ORDER BY c.seq LIMIT ?1"
         )?;
         let rows = statement.query_map([limit.min(500) as i64], |row| {
             Ok(IndexWork {
@@ -192,7 +304,7 @@ impl Archive {
                     body: row.get(3)?,
                     from: row.get(4)?,
                     to: row.get(5)?,
-                    cc: String::new(),
+                    cc: row.get(6)?,
                 },
             })
         })?;
@@ -257,7 +369,7 @@ impl Archive {
     }
 }
 
-fn canonical_address(address: &str) -> String {
+pub(crate) fn canonical_address(address: &str) -> String {
     match address.rsplit_once('@') {
         Some((local, domain)) => format!("{local}@{}", domain.to_ascii_lowercase()),
         None => address.to_owned(),

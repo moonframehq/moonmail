@@ -9,6 +9,7 @@ version.workspace      = true
 moonmail-core.workspace = true
 rusqlite.workspace      = true
 thiserror.workspace     = true
+time.workspace          = true
 
 [dev-dependencies]
 tempfile.workspace = true

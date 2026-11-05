@@ -1,6 +1,6 @@
 use {
     crate::{Error, Result},
-    moonmail_core::{IndexChange, MessageId, SearchIndex, SearchQuery},
+    moonmail_core::{IndexChange, MessageId, SearchIndex, SearchQuery, TextField, TextTerm},
     rusqlite::{Connection, params},
     std::{path::Path, time::Duration},
 };
@@ -44,6 +44,47 @@ impl SqliteIndex {
 impl SearchIndex for SqliteIndex {
     type Error = Error;
 
+    fn visit_terms(
+        &self,
+        terms: &[TextTerm],
+        mut visitor: impl FnMut(usize, MessageId) -> bool,
+    ) -> Result<()> {
+        let transaction = self.connection.unchecked_transaction()?;
+        {
+            let mut query = transaction.prepare(
+                "SELECT rowid FROM documents_fts WHERE documents_fts MATCH ?1 ORDER BY rowid",
+            )?;
+            'terms: for (slot, term) in terms.iter().enumerate() {
+                let phrase = expression(&[&term.value]);
+                if phrase.is_empty() {
+                    continue;
+                }
+                let field = match term.field {
+                    TextField::Any => None,
+                    TextField::Subject => Some("subject"),
+                    TextField::Body => Some("body"),
+                    TextField::From => Some("from_addr"),
+                    TextField::To => Some("to_addr"),
+                    TextField::Cc => Some("cc_addr"),
+                };
+                let expression =
+                    field.map_or_else(|| phrase.clone(), |field| format!("{field} : {phrase}"));
+                let mut rows = query.query([expression])?;
+                while let Some(row) = rows.next()? {
+                    let id: i64 = row.get(0)?;
+                    let id = u64::try_from(id)
+                        .map(MessageId)
+                        .map_err(|_| rusqlite::Error::IntegralValueOutOfRange(0, id))?;
+                    if !visitor(slot, id) {
+                        break 'terms;
+                    }
+                }
+            }
+        }
+        transaction.commit()?;
+        Ok(())
+    }
+
     fn apply(&mut self, changes: &[IndexChange<'_>]) -> Result<()> {
         if changes.is_empty() {
             return Ok(());
@@ -81,14 +122,7 @@ impl SearchIndex for SqliteIndex {
     }
 
     fn search(&self, query: SearchQuery<'_>) -> Result<Vec<MessageId>> {
-        let expression = query
-            .phrases
-            .iter()
-            .map(|phrase| phrase.trim())
-            .filter(|phrase| !phrase.is_empty())
-            .map(|phrase| format!("\"{}\"", phrase.replace('"', "\"\"")))
-            .collect::<Vec<_>>()
-            .join(" AND ");
+        let expression = expression(query.phrases);
         if expression.is_empty() {
             return Ok(Vec::new());
         }
@@ -105,6 +139,42 @@ impl SearchIndex for SqliteIndex {
         })?;
         Ok(rows.collect::<rusqlite::Result<_>>()?)
     }
+
+    fn visit_matches(
+        &self,
+        phrases: &[&str],
+        mut visitor: impl FnMut(MessageId) -> bool,
+    ) -> Result<()> {
+        let expression = expression(phrases);
+        if expression.is_empty() {
+            return Ok(());
+        }
+        // One statement holds a consistent SQLite read snapshot for the walk.
+        let mut statement = self.connection.prepare_cached(
+            "SELECT rowid FROM documents_fts WHERE documents_fts MATCH ?1 ORDER BY rowid",
+        )?;
+        let mut rows = statement.query([expression])?;
+        while let Some(row) = rows.next()? {
+            let id: i64 = row.get(0)?;
+            let id = u64::try_from(id)
+                .map(MessageId)
+                .map_err(|_| rusqlite::Error::IntegralValueOutOfRange(0, id))?;
+            if !visitor(id) {
+                break;
+            }
+        }
+        Ok(())
+    }
+}
+
+fn expression(phrases: &[&str]) -> String {
+    phrases
+        .iter()
+        .map(|phrase| phrase.trim())
+        .filter(|phrase| !phrase.is_empty())
+        .map(|phrase| format!("\"{}\"", phrase.replace('"', "\"\"")))
+        .collect::<Vec<_>>()
+        .join(" AND ")
 }
 
 fn sqlite_id(id: MessageId) -> Result<i64> {

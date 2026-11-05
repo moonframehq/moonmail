@@ -1,20 +1,20 @@
 use {
-    crate::CredentialStore,
-    fs2::FileExt,
+    crate::{CredentialStore, Provider},
     oauth2::{CsrfToken, PkceCodeChallenge},
     reqwest::blocking::Client,
     serde::{Deserialize, Serialize},
     std::{
-        fs::{File, OpenOptions},
         io::{BufRead, BufReader, Read, Write},
         net::TcpListener,
-        path::{Path, PathBuf},
         time::{Duration, Instant},
     },
     zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing},
 };
 
 const ISSUER: &str = "https://api.fastmail.com";
+
+#[path = "oauth_external.rs"]
+mod external;
 
 #[derive(Debug, thiserror::Error)]
 pub enum AuthError<E: std::error::Error + 'static> {
@@ -40,6 +40,10 @@ pub struct LoginSecret {
 
 #[derive(Default, Serialize, Deserialize, Zeroize, ZeroizeOnDrop)]
 struct Record {
+    #[serde(default)]
+    provider: String,
+    #[serde(default)]
+    client_secret: String,
     password: String,
     client_id: String,
     access_token: String,
@@ -65,36 +69,21 @@ struct Registration {
 #[derive(Deserialize, Zeroize, ZeroizeOnDrop)]
 struct Tokens {
     access_token: String,
+    #[serde(default)]
     refresh_token: String,
     expires_in: u64,
     token_type: String,
+    #[serde(default)]
+    scope: Option<String>,
 }
 
 pub struct Auth<C> {
     store: C,
-    root: PathBuf,
 }
 
 impl<C: CredentialStore> Auth<C> {
-    pub fn new(store: C, root: impl AsRef<Path>) -> Self {
-        Self {
-            store,
-            root: root.as_ref().to_owned(),
-        }
-    }
-
-    fn lock(&self) -> Result<File, AuthError<C::Error>> {
-        std::fs::create_dir_all(&self.root)?;
-        let file = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create(true)
-            .truncate(false)
-            .open(self.root.join("credentials.lock"))?;
-        file.try_lock_exclusive().map_err(|_| {
-            AuthError::Protocol("Another account authentication operation is running")
-        })?;
-        Ok(file)
+    pub fn new(store: C) -> Self {
+        Self { store }
     }
 
     fn client(&self) -> Result<Client, AuthError<C::Error>> {
@@ -139,11 +128,13 @@ impl<C: CredentialStore> Auth<C> {
     }
 
     pub fn password(&self, email: &str, password: String) -> Result<(), AuthError<C::Error>> {
-        let _lock = self.lock()?;
+        let _lock = self.store.lock(email).map_err(AuthError::Credentials)?;
         self.save(
             email,
             &Record {
                 password,
+                provider: String::new(),
+                client_secret: String::new(),
                 client_id: String::new(),
                 access_token: String::new(),
                 refresh_token: String::new(),
@@ -154,7 +145,7 @@ impl<C: CredentialStore> Auth<C> {
     }
 
     pub fn authorize(&self, email: &str) -> Result<(), AuthError<C::Error>> {
-        let _lock = self.lock()?;
+        let _lock = self.store.lock(email).map_err(AuthError::Credentials)?;
         let client = self.client()?;
         let metadata = self.discovery(&client)?;
         let listener = TcpListener::bind(("127.0.0.1", 0))?;
@@ -185,7 +176,7 @@ impl<C: CredentialStore> Auth<C> {
             ("resource", "smtp.fastmail.com"),
         ]);
         open::that(url.as_str())?;
-        let code = receive_code(&listener, state.secret(), &redirect)?;
+        let code = receive_code(&listener, state.secret(), &redirect, Provider::Fastmail)?;
         let tokens: Tokens = client
             .post(&metadata.token_endpoint)
             .form(&[
@@ -227,12 +218,29 @@ impl<C: CredentialStore> Auth<C> {
                 refresh_token: tokens.refresh_token.clone(),
                 expires_at,
                 refreshing: false,
+                provider: String::new(),
+                client_secret: String::new(),
             },
         )
     }
 
     pub fn credentials(&self, email: &str) -> Result<LoginSecret, AuthError<C::Error>> {
-        let _lock = self.lock()?;
+        self.credentials_bound(email, None)
+    }
+
+    pub fn credentials_for(
+        &self,
+        account: &crate::Account,
+    ) -> Result<LoginSecret, AuthError<C::Error>> {
+        self.credentials_bound(&account.email, Some(account))
+    }
+
+    fn credentials_bound(
+        &self,
+        email: &str,
+        account: Option<&crate::Account>,
+    ) -> Result<LoginSecret, AuthError<C::Error>> {
+        let _lock = self.store.lock(email).map_err(AuthError::Credentials)?;
         let json = Zeroizing::new(
             self.store
                 .load(email)
@@ -240,11 +248,42 @@ impl<C: CredentialStore> Auth<C> {
                 .ok_or(AuthError::Protocol("Connect your account first"))?,
         );
         let mut record: Record = serde_json::from_str(&json)?;
+        if !matches!(
+            record.provider.as_str(),
+            "" | "fastmail" | "google" | "microsoft"
+        ) {
+            return Err(AuthError::Protocol(
+                "Unrecognized credential provider; reconnect the account",
+            ));
+        }
         if !record.password.is_empty() {
             return Ok(LoginSecret {
                 bearer: false,
                 value: record.password.clone(),
             });
+        }
+        if let Some(account) = account {
+            let provider = match record.provider.as_str() {
+                "google" => Provider::Google,
+                "microsoft" => Provider::Microsoft,
+                _ => Provider::Fastmail,
+            };
+            let preset = crate::Account::preset(provider, email)
+                .map_err(|_| AuthError::Protocol("Invalid OAuth account address"))?;
+            if account.provider != provider
+                || account.imap_host != preset.imap_host
+                || account.smtp_host != preset.smtp_host
+                || account.imap_port != preset.imap_port
+                || account.smtp_port != preset.smtp_port
+                || account.imap_tls != preset.imap_tls
+                || account.smtp_tls != preset.smtp_tls
+                || account.imap_login() != email
+                || account.smtp_login() != email
+            {
+                return Err(AuthError::Protocol(
+                    "OAuth credentials require their original provider's server settings; reconnect this account",
+                ));
+            }
         }
         if record.refreshing {
             return Err(AuthError::Protocol(
@@ -256,6 +295,9 @@ impl<C: CredentialStore> Auth<C> {
                 bearer: true,
                 value: record.access_token.clone(),
             });
+        }
+        if matches!(record.provider.as_str(), "google" | "microsoft") {
+            return self.refresh_external(email, &mut record);
         }
         let client = self.client()?;
         let metadata = self.discovery(&client)?;
@@ -281,11 +323,16 @@ impl<C: CredentialStore> Auth<C> {
     }
 
     pub fn disconnect(&self, email: &str) -> Result<(), AuthError<C::Error>> {
-        let _lock = self.lock()?;
+        let _lock = self.store.lock(email).map_err(AuthError::Credentials)?;
         if let Some(json) = self.store.load(email).map_err(AuthError::Credentials)? {
             let json = Zeroizing::new(json);
             let record: Record = serde_json::from_str(&json)?;
-            if !record.refresh_token.is_empty() {
+            if record.provider == "google" {
+                self.revoke_google(&record)?;
+            } else if record.provider == "microsoft" {
+                // Microsoft's delegated desktop flow has no per-token revocation
+                // endpoint. Disconnect removes this app's locally held grant.
+            } else if !record.refresh_token.is_empty() {
                 let client = self.client()?;
                 let metadata = self.discovery(&client)?;
                 client
@@ -307,6 +354,7 @@ fn receive_code<E: std::error::Error + 'static>(
     listener: &TcpListener,
     state: &str,
     redirect: &str,
+    provider: Provider,
 ) -> Result<Zeroizing<String>, AuthError<E>> {
     let deadline = Instant::now() + Duration::from_secs(300);
     while Instant::now() < deadline {
@@ -326,7 +374,7 @@ fn receive_code<E: std::error::Error + 'static>(
                 else {
                     continue;
                 };
-                let Some(callback) = parse_callback(target, state, redirect) else {
+                let Some(callback) = parse_callback_for(target, state, redirect, provider) else {
                     let _=stream.write_all(b"HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\nInvalid OAuth callback.");
                     continue;
                 };
@@ -355,7 +403,12 @@ enum Callback {
     Code(Zeroizing<String>),
 }
 
-fn parse_callback(target: &str, state: &str, redirect: &str) -> Option<Callback> {
+fn parse_callback_for(
+    target: &str,
+    state: &str,
+    redirect: &str,
+    provider: Provider,
+) -> Option<Callback> {
     if !target.starts_with('/') || target.starts_with("//") {
         return None;
     }
@@ -370,7 +423,30 @@ fn parse_callback(target: &str, state: &str, redirect: &str) -> Option<Callback>
             return None;
         }
     }
-    if parameters.get("state")?.as_ref() != state || parameters.get("iss")?.as_ref() != ISSUER {
+    if parameters.get("state")?.as_ref() != state {
+        return None;
+    }
+    let issuer = parameters.get("iss").map(|value| value.as_ref());
+    match provider {
+        Provider::Fastmail if issuer != Some(ISSUER) => return None,
+        Provider::Google if issuer.is_some_and(|value| value != "https://accounts.google.com") => {
+            return None;
+        },
+        Provider::Microsoft
+            if issuer.is_some_and(|value| {
+                url::Url::parse(value).map_or(true, |url| {
+                    url.scheme() != "https"
+                        || url.host_str() != Some("login.microsoftonline.com")
+                        || !url.path().ends_with("/v2.0")
+                })
+            }) =>
+        {
+            return None;
+        },
+        Provider::Fastmail | Provider::Google | Provider::Microsoft => {},
+        _ => return None,
+    }
+    if parameters.contains_key("code") && parameters.contains_key("error") {
         return None;
     }
     if parameters.contains_key("error") {
@@ -390,6 +466,10 @@ pub fn oauth_bearer(host: &str, port: u16, token: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn parse_callback(target: &str, state: &str, redirect: &str) -> Option<Callback> {
+        parse_callback_for(target, state, redirect, Provider::Fastmail)
+    }
 
     #[test]
     fn callbacks_require_state_issuer_path_and_unambiguous_parameters() {
@@ -422,6 +502,10 @@ mod tests {
     struct Stored(String);
     impl CredentialStore for Stored {
         type Error = std::io::Error;
+        type Guard = ();
+        fn lock(&self, _: &str) -> Result<Self::Guard, Self::Error> {
+            Ok(())
+        }
         fn load(&self, _: &str) -> Result<Option<String>, Self::Error> {
             Ok(Some(self.0.clone()))
         }
@@ -434,9 +518,26 @@ mod tests {
     }
 
     #[test]
+    fn oauth_credentials_cannot_be_retargeted_to_another_provider_or_host()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let auth = Auth::new(Stored(serde_json::json!({
+            "provider":"google", "password":"", "client_id":"synthetic.apps.googleusercontent.com",
+            "access_token":"synthetic", "refresh_token":"refresh", "expires_at":i64::MAX, "refreshing":false
+        }).to_string()));
+        let mut account = crate::Account::preset(Provider::Google, "me@example.org")?;
+        assert!(auth.credentials_for(&account)?.bearer);
+        account.smtp_host = "another.example.org".into();
+        assert!(auth.credentials_for(&account).is_err());
+        assert!(
+            auth.credentials_for(&crate::Account::fastmail("me@example.org")?)
+                .is_err()
+        );
+        Ok(())
+    }
+
+    #[test]
     fn interrupted_rotating_refresh_requires_reconnect_without_network()
     -> Result<(), Box<dyn std::error::Error>> {
-        let dir = tempfile::tempdir()?;
         let record = Record {
             password: String::new(),
             client_id: "id".into(),
@@ -444,8 +545,10 @@ mod tests {
             refresh_token: "old-refresh".into(),
             expires_at: 0,
             refreshing: true,
+            provider: String::new(),
+            client_secret: String::new(),
         };
-        let auth = Auth::new(Stored(serde_json::to_string(&record)?), dir.path());
+        let auth = Auth::new(Stored(serde_json::to_string(&record)?));
         assert!(matches!(
             auth.credentials("test@example.com"),
             Err(AuthError::Protocol(_))

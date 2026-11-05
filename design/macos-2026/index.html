@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Moonmail · A little more room to think</title>
+    <link rel="stylesheet" href="mockups.css" />
+    <script src="mockups.js" defer></script>
+  </head>
+  <body>
+    <header class="presentation">
+      <div class="brand">
+        <span class="moon"></span> moonmail
+        <span class="edition">DESIGN STUDY / 01</span>
+      </div>
+      <div class="intro">
+        <div>
+          <h1>A little more room to think.</h1>
+          <p>
+            A quieter composer. A real Drafts table. A toolbar you can actually
+            see.
+          </p>
+        </div>
+        <button
+          id="theme"
+          class="theme-button"
+          aria-label="Switch to dark appearance"
+        >
+          Dark appearance
+        </button>
+      </div>
+      <div class="navigation">
+        <nav aria-label="Design directions">
+          <button class="active" data-view="floating">
+            01 <b>Focused window</b><span>Recommended</span></button
+          ><button data-view="integrated">02 <b>In-place composer</b></button
+          ><button data-view="drafts">03 <b>Drafts & toolbar</b></button>
+        </nav>
+        <button id="pick" class="pick">
+          Choose this direction <span>↗</span>
+        </button>
+      </div>
+    </header>
+    <main>
+      <section class="stage" aria-label="Interactive Moonmail design mockup">
+        <div id="canvas" class="canvas"></div>
+      </section>
+      <section class="design-notes">
+        <div>
+          <span id="note-number">01 / FOCUS</span>
+          <h2 id="note-title">One message. Its own space.</h2>
+          <p id="note-body">
+            A floating composer with a compact envelope, a comfortable line
+            length, and Send always in view. Close the window to return to your
+            saved draft.
+          </p>
+        </div>
+        <div>
+          <span>SHARED DETAILS</span>
+          <ul>
+            <li><b>24px</b> toolbar symbols · 40px hit targets</li>
+            <li>To / Cc / Bcc on demand · switchable identity</li>
+            <li>Message-style Drafts · sortable columns</li>
+          </ul>
+        </div>
+        <div class="try">
+          <span>TRY THE MOCKUP</span>
+          <p>
+            Switch appearance, reveal Cc / Bcc, edit the message, select a
+            draft, or double-click a row to compose.
+          </p>
+          <label
+            >Table density
+            <select id="density">
+              <option value="comfortable">Comfortable · 34px</option>
+              <option value="compact">Compact · 28px</option>
+            </select></label
+          >
+        </div>
+      </section>
+      <footer>
+        Visual prototype · synthetic messages · controls simulate local
+        interactions
+        <span>Use Annotate to leave notes, or choose a direction above.</span>
+      </footer>
+      <div id="feedback" role="status" aria-live="polite"></div>
+    </main>
+  </body>
+</html>

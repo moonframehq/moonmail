@@ -11,27 +11,87 @@ pub fn dispatch(root: &Path, args: &[String]) -> Result<bool> {
         return Ok(false);
     };
     match command {
+        #[cfg(feature = "capture")]
+        "capture-snapshot" => {
+            let view = args.get(1).context("Missing capture view")?;
+            println!(
+                "{}",
+                serde_json::to_string(&crate::provider::Mail::capture_snapshot(root, view)?)?
+            );
+        },
         "login" | "password" => {
             let email = args
                 .get(1)
                 .context("Usage: moonmail login EMAIL (or password EMAIL)")?;
-            let account = Account::fastmail(email)?;
-            let auth = Auth::new(Keychain, root);
+            let provider = args
+                .get(2)
+                .map(String::as_str)
+                .or_else(|| {
+                    email
+                        .rsplit_once('@')
+                        .and_then(|(_, domain)| crate::account_setup::domain_provider(domain))
+                })
+                .unwrap_or("fastmail");
+            let account = Account::preset(crate::account_setup::provider(provider)?, email)?;
+            account.check_registration(root)?;
+            let auth = Auth::new(Keychain);
             if command == "login" {
-                auth.authorize(email)?;
+                auth.authorize_provider(account.provider, email)?;
+                moonmail_network::check_account(&account, &auth.credentials_for(&account)?)?;
             } else {
-                auth.password(
-                    email,
-                    rpassword::prompt_password("Fastmail app password: ")?,
-                )?;
+                let secret = moonmail_network::LoginSecret {
+                    bearer: false,
+                    value: rpassword::prompt_password("App password: ")?,
+                };
+                moonmail_network::check_account(&account, &secret)?;
+                auth.password(email, secret.value.clone())?;
             }
             account.save(root)?;
             println!("Connected {email}. Run `just sync` to download mail.");
         },
+        "connect" => {
+            let path = args
+                .get(1)
+                .context("Usage: moonmail connect ACCOUNT.json")?;
+            let account: Account = serde_json::from_slice(&std::fs::read(path)?)?;
+            account.check_registration(root)?;
+            let secret = moonmail_network::LoginSecret {
+                bearer: false,
+                value: rpassword::prompt_password("Mail server password: ")?,
+            };
+            moonmail_network::check_account(&account, &secret)?;
+            Auth::new(Keychain).password(&account.email, secret.value.clone())?;
+            account.save(root)?;
+            println!(
+                "Connected {}. Run `just sync` to download mail.",
+                account.email
+            );
+        },
+        "oauth-client" => {
+            use std::io::Read;
+            let provider = crate::account_setup::provider(
+                args.get(1)
+                    .context("Usage: moonmail oauth-client PROVIDER CLIENT.json")?,
+            )?;
+            let path = args.get(2).context("Choose an OAuth client JSON file")?;
+            let mut bytes = Vec::new();
+            std::fs::File::open(path)?
+                .take(65537)
+                .read_to_end(&mut bytes)?;
+            Auth::new(Keychain).import_oauth_client(provider, &bytes)?;
+            println!("OAuth desktop client saved in macOS Keychain.");
+        },
         "disconnect" => {
-            if let Some(account) = Account::load(root)? {
-                Auth::new(Keychain, root).disconnect(&account.email)?;
-                std::fs::remove_file(root.join("account.json"))?;
+            let account = if let Some(email) = args.get(1) {
+                Account::load_for(root, email)?
+                    .context("Account is not connected")?
+                    .into()
+            } else {
+                Account::load(root)?
+            };
+            if let Some(account) = account {
+                Auth::new(Keychain).disconnect(&account.email)?;
+                Account::remove(root, &account.email)?;
             }
             println!("Disconnected. Local mail is retained.");
         },
@@ -60,6 +120,47 @@ pub fn dispatch(root: &Path, args: &[String]) -> Result<bool> {
         "seed-demo" => {
             moonmail_store::seed_demo(&mut Archive::open(root)?, &FileBlobs::new(root))?;
             crate::local::index_all(root)?;
+        },
+        "export" => {
+            anyhow::ensure!(
+                args.len() == 3,
+                "Usage: moonmail export MESSAGE_ID DESTINATION.eml"
+            );
+            let id = args[1]
+                .parse::<u64>()
+                .context("Message ID must be a positive local ID")?;
+            anyhow::ensure!(id > 0 && id <= i64::MAX as u64, "Invalid local message ID");
+            let destination = std::path::absolute(&args[2])?;
+            crate::file_export::message(
+                &Archive::open(root)?,
+                &FileBlobs::new(root),
+                moonmail_core::MessageId(id),
+                &destination,
+            )?;
+            println!("Saved original message to {}", destination.display());
+        },
+        "export-many" => {
+            anyhow::ensure!(
+                (3..=102).contains(&args.len()),
+                "Usage: moonmail export-many DIRECTORY MESSAGE_ID [MESSAGE_ID ...] (up to 100)"
+            );
+            let ids = args[2..]
+                .iter()
+                .map(|value| {
+                    let id = value
+                        .parse::<u64>()
+                        .context("Message ID must be a positive local ID")?;
+                    anyhow::ensure!(id > 0 && id <= i64::MAX as u64, "Invalid local message ID");
+                    Ok(moonmail_core::MessageId(id))
+                })
+                .collect::<Result<Vec<_>>>()?;
+            let destination = crate::file_export::messages(
+                &Archive::open(root)?,
+                &FileBlobs::new(root),
+                &ids,
+                &std::path::absolute(&args[1])?,
+            )?;
+            println!("Exported originals to {}", destination.display());
         },
         "status" => {
             let archive = Archive::open(root)?;
@@ -93,7 +194,7 @@ pub fn dispatch(root: &Path, args: &[String]) -> Result<bool> {
             println!("Demo archive, search journal, pagination, reader and Correspondence passed.");
         },
         "--help" | "help" => println!(
-            "Moonmail\n\n  (no arguments)       Open the mail client\n  login EMAIL          Fastmail OAuth (browser + PKCE)\n  password EMAIL       Store a Fastmail app password in Keychain\n  sync                 Download folders and reconcile flags\n  import PATH          Import .eml files recursively\n  reindex              Replay the search journal\n  status               Show local archive counts\n  disconnect           Revoke credentials; retain local mail\n  --check              Isolated Moonframe UI validation\n\nMOONMAIL_DATA_DIR overrides the archive directory. MOONMAIL_DEMO=1 selects synthetic demo mail."
+            "Moonmail\n\n  (no arguments)                Open the mail client\n  login EMAIL [PROVIDER]         Browser OAuth + PKCE; provider inferred from domain\n  password EMAIL [PROVIDER]      Verify IMAP/SMTP and store an app password\n  connect ACCOUNT.json           Connect custom IMAP/SMTP using a hidden password prompt\n  oauth-client PROVIDER FILE     Import Google/Microsoft desktop client JSON into Keychain\n  sync                          Sync all accounts and finish pending Sent copies\n  import PATH                   Import .eml files recursively\n  export ID PATH                Save original bytes as a new .eml file\n  export-many DIR IDs            Export up to 100 originals into a new folder\n  reindex                       Replay the search journal\n  status                        Show local archive counts\n  disconnect [EMAIL]            Disconnect one account; retain local mail\n  --check                       Isolated Moonframe UI validation\n\nProviders: fastmail, google, microsoft, icloud, yahoo, aol, other.\nGoogle/Microsoft browser login requires an imported desktop OAuth client.\nMOONMAIL_DATA_DIR overrides the archive directory. MOONMAIL_DEMO=1 selects synthetic demo mail."
         ),
         value if value.starts_with('-') || value == "bundle" => return Ok(false),
         _ => bail!("Unknown command {command}; use --help"),

@@ -1,4 +1,7 @@
-use {moonmail_core::Mailbox, serde::Serialize};
+use {
+    moonmail_core::{Mailbox, MailboxRole},
+    serde::Serialize,
+};
 
 #[derive(Serialize)]
 pub struct Folder {
@@ -6,6 +9,7 @@ pub struct Folder {
     name: String,
     id: Option<i64>,
     unread: u64,
+    icon: Option<&'static str>,
     children: Vec<Folder>,
 }
 
@@ -23,6 +27,7 @@ pub fn folders(mailboxes: &[Mailbox]) -> Vec<Folder> {
                     name: mailbox.account.clone(),
                     id: None,
                     unread: 0,
+                    icon: None,
                     children: Vec::new(),
                 });
                 roots.len() - 1
@@ -58,6 +63,7 @@ fn insert(nodes: &mut Vec<Folder>, parent: &str, parts: &[&str], mailbox: &Mailb
                 name: (*name).to_owned(),
                 id: None,
                 unread: 0,
+                icon: None,
                 children: Vec::new(),
             });
             nodes.len() - 1
@@ -66,6 +72,16 @@ fn insert(nodes: &mut Vec<Folder>, parent: &str, parts: &[&str], mailbox: &Mailb
     node.unread += mailbox.unread;
     if remaining.is_empty() {
         node.id = mailbox.selectable.then_some(mailbox.id);
+        node.icon = mailbox.role.map(|role| match role {
+            MailboxRole::Inbox => "inbox",
+            MailboxRole::Archive => "archive",
+            MailboxRole::Sent => "send",
+            MailboxRole::Drafts => "file-text",
+            MailboxRole::Junk => "ban",
+            MailboxRole::Trash => "trash-2",
+            MailboxRole::All => "mails",
+            MailboxRole::Flagged => "flag",
+        });
     } else {
         insert(&mut node.children, &node.key, remaining, mailbox);
     }
@@ -77,11 +93,13 @@ mod tests {
     #[test]
     fn respects_server_delimiters_flat_names_and_nonselectable_parents() {
         let mailbox = |id, name: &str, delimiter: Option<&str>, selectable| Mailbox {
+            epoch: 0,
             id,
             account: "test@example.org".into(),
             name: name.into(),
             delimiter: delimiter.map(str::to_owned),
             selectable,
+            role: None,
             total: 1,
             unread: 1,
         };

@@ -14,6 +14,7 @@ local archive, MIME/search adapters, Fastmail workers, and comparison harness.
 - `moonmail-store`: authoritative SQLite metadata, immutable blobs, durable journal/outbox.
 - `moonmail-network`: generic incoming/submission/credential boundaries, Fastmail adapters.
 - `moonmail-app`: CLI, Moonframe provider, Luau shell and bounded UI snapshots.
+- `moonmail-test-maild`: ephemeral Rust IMAP/SMTP fixture, native and Docker protocol tests.
 - The chosen IMAP dependency is exactly `3.0.0-alpha.15` of `imap` (rust-imap).
   The blocking connection adapter owns its socket on a dedicated worker.
 

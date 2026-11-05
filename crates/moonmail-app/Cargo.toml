@@ -13,13 +13,18 @@ path = "src/main.rs"
 [dependencies]
 ammonia.workspace          = true
 anyhow.workspace           = true
+base64.workspace           = true
 fs2.workspace              = true
+image.workspace            = true
+linkify.workspace          = true
 moonframe.workspace        = true
 moonmail-core.workspace    = true
 moonmail-mime.workspace    = true
 moonmail-network.workspace = true
 moonmail-search.workspace  = true
 moonmail-store.workspace   = true
+open.workspace             = true
+percent-encoding.workspace = true
 rpassword.workspace        = true
 serde.workspace            = true
 serde_json.workspace       = true
@@ -27,6 +32,9 @@ tempfile.workspace         = true
 time.workspace             = true
 url.workspace              = true
 uuid.workspace             = true
+
+[dev-dependencies]
+rusqlite.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
 core-text.workspace = true

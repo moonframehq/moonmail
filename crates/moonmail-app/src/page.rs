@@ -1,14 +1,39 @@
-/// No email-controlled URLs, images, style, scripts or navigation survive. The
-/// CSP is defense in depth; plain text remains available without a web view.
+/// Email-controlled navigation, active content and remote resources are removed.
+/// Embedded images can only come from trusted decoded/re-encoded CID resources.
 #[cfg(test)]
 pub fn html(source: &str) -> String {
     html_with_font(source, &crate::fonts::ReaderFont::default())
 }
 
 pub fn html_with_font(source: &str, font: &crate::fonts::ReaderFont) -> String {
+    html_with_images(source, font, std::collections::HashMap::new())
+}
+
+pub fn html_with_images(
+    source: &str,
+    font: &crate::fonts::ReaderFont,
+    images: std::collections::HashMap<String, String>,
+) -> String {
     let clean = ammonia::Builder::default()
-        .rm_tags(&["img", "a", "form", "input", "video", "audio", "source"])
-        .url_schemes(std::collections::HashSet::new())
+        .rm_tags(&["a", "form", "input", "video", "audio", "source"])
+        .url_schemes(std::collections::HashSet::from(["cid", "data"]))
+        .url_relative(ammonia::UrlRelative::Deny)
+        .attribute_filter(move |element, attribute, value| {
+            if element == "img" && attribute == "src" {
+                let prefix = value.get(..4)?;
+                if !prefix.eq_ignore_ascii_case("cid:") {
+                    return None;
+                }
+                let cid = percent_encoding::percent_decode_str(&value[4..])
+                    .decode_utf8()
+                    .ok()?;
+                return images
+                    .get(cid.as_ref())
+                    .cloned()
+                    .map(std::borrow::Cow::Owned);
+            }
+            Some(value.into())
+        })
         .clean(source)
         .to_string();
     // CSS string escaping also keeps closing tags out of the style element.
@@ -24,7 +49,7 @@ pub fn html_with_font(source: &str, font: &crate::fonts::ReaderFont) -> String {
     };
     let size = font.size.clamp(8, 32);
     format!(
-        "<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"color-scheme\" content=\"light dark\"><meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'\"><style>:root{{color-scheme:light dark;color:#202020;background:#ffffff}}body{{font:{size}px/1.55 {family},sans-serif;max-width:850px;margin:18px}}pre{{white-space:pre-wrap;overflow-wrap:anywhere;font:inherit;margin:0}}table{{max-width:100%}}blockquote{{border-left:3px solid #c9c9cd;padding-left:16px;color:#6b6b70}}@media(prefers-color-scheme:dark){{:root{{color:#ededed;background:#202020}}blockquote{{color:#a6a6aa;border-color:#454545}}}}</style></head><body>{clean}</body></html>"
+        "<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"color-scheme\" content=\"light dark\"><meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; img-src data:; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'\"><style>:root{{color-scheme:light dark;color:#202020;background:#ffffff}}body{{font:{size}px/1.55 {family},sans-serif;max-width:850px;margin:18px}}pre{{white-space:pre-wrap;overflow-wrap:anywhere;font:inherit;margin:0}}table,img{{max-width:100%}}blockquote{{border-left:3px solid #c9c9cd;padding-left:16px;color:#6b6b70}}@media(prefers-color-scheme:dark){{:root{{color:#ededed;background:#202020}}blockquote{{color:#a6a6aa;border-color:#454545}}}}</style></head><body>{clean}</body></html>"
     )
 }
 

@@ -1,10 +1,2 @@
-# Local only, until Moonframe's mod-window-titlebar branch lands on main:
-# Settings hides its title bar, which released Moonframe refuses for a mod.
-[patch."https://github.com/moonframehq/moonframe"]
-moonframe           = { path = "../moonframe-mod-titlebar/crates/moonframe" }
-moonframe-acp       = { path = "../moonframe-mod-titlebar/crates/moonframe-acp" }
-moonframe-core      = { path = "../moonframe-mod-titlebar/crates/moonframe-core" }
-moonframe-history   = { path = "../moonframe-mod-titlebar/crates/moonframe-history" }
-moonframe-packages  = { path = "../moonframe-mod-titlebar/crates/moonframe-packages" }
-moonframe-providers = { path = "../moonframe-mod-titlebar/crates/moonframe-providers" }
-moonframe-store     = { path = "../moonframe-mod-titlebar/crates/moonframe-store" }
+# Moonframe is pinned in Cargo.toml, including merged mod-window title-bar support.
+# No sibling working-tree patches are required.

@@ -1,14 +1,15 @@
 use {
     crate::{Archive, Error, Result},
     moonmail_core::{
-        MailDetail, MailPage, MailQuery, MailRepository, MailSummary, Mailbox, MessageId,
-        PageCursor, SortField, ViewFilter,
+        MailDetail, MailPage, MailQuery, MailRepository, MailSummary, Mailbox, MailboxRole,
+        MessageId, PageCursor, SortField, ViewFilter,
     },
     rusqlite::{OptionalExtension, params, params_from_iter, types::Value},
     time::{OffsetDateTime, format_description::well_known::Rfc2822},
 };
 
-const SUMMARY: &str = "SELECT m.id,m.subject,m.sender,m.address,m.recipients,m.date,m.snippet,
+pub(crate) const SUMMARY: &str =
+    "SELECT m.id,m.subject,m.sender,m.address,m.recipients,m.date,m.snippet,
     EXISTS(SELECT 1 FROM occurrences o WHERE o.message_id=m.id AND seen=0),
     EXISTS(SELECT 1 FROM occurrences o WHERE o.message_id=m.id AND flagged=1),1 FROM messages m";
 const LIVE: &str = "EXISTS(SELECT 1 FROM occurrences o WHERE o.message_id=m.id)";
@@ -17,9 +18,10 @@ impl MailRepository for Archive {
     type Error = Error;
 
     fn mailboxes(&self) -> Result<Vec<Mailbox>> {
-        let mut statement = self.connection.prepare_cached("SELECT b.id,b.account,b.name,COUNT(o.message_id),COALESCE(SUM(o.seen=0),0),b.delimiter,b.selectable FROM mailboxes b LEFT JOIN occurrences o ON o.mailbox_id=b.id GROUP BY b.id ORDER BY b.name COLLATE NOCASE")?;
+        let mut statement = self.connection.prepare_cached("SELECT b.id,b.account,b.name,COUNT(o.message_id),COALESCE(SUM(o.seen=0),0),b.delimiter,b.selectable,COALESCE(b.user_role,b.server_role),b.epoch FROM mailboxes b LEFT JOIN occurrences o ON o.mailbox_id=b.id WHERE b.active=1 GROUP BY b.id ORDER BY b.name COLLATE NOCASE")?;
         let rows = statement.query_map([], |row| {
             Ok(Mailbox {
+                epoch: row.get(8)?,
                 id: row.get(0)?,
                 account: row.get(1)?,
                 name: row.get(2)?,
@@ -27,6 +29,10 @@ impl MailRepository for Archive {
                 unread: row.get::<_, i64>(4)? as u64,
                 delimiter: row.get(5)?,
                 selectable: row.get(6)?,
+                role: row
+                    .get::<_, Option<String>>(7)?
+                    .as_deref()
+                    .and_then(MailboxRole::parse),
             })
         })?;
         Ok(rows.collect::<rusqlite::Result<_>>()?)
@@ -53,21 +59,31 @@ impl MailRepository for Archive {
             ViewFilter::All => {},
         }
         if let Some(id) = query.thread {
-            clauses.push(
-                "(m.account,m.thread_key)=(SELECT account,thread_key FROM messages WHERE id=?)"
-                    .into(),
-            );
+            clauses.push(crate::thread_graph::relation("?"));
             arguments.push((id.0 as i64).into());
+        }
+        if query.search_matches {
+            if !self.search_prepared {
+                return Err(Error::Invalid("prepare search matches before querying"));
+            }
+            if let Some(predicate) = &self.search_predicate {
+                clauses.push(format!("({})", predicate.sql));
+                arguments.extend(predicate.arguments.iter().cloned());
+            } else {
+                clauses.push("m.id IN (SELECT id FROM temp.search_matches)".into());
+            }
         }
         if let Some(ids) = &query.ids {
             if ids.is_empty() {
                 return Ok(MailPage {
                     rows: Vec::new(),
                     next: None,
+                    first: None,
+                    last: None,
                 });
             }
             if ids.len() > 1000 {
-                return Err(Error::Invalid("search candidate limit is 1000"));
+                return Err(Error::Invalid("explicit ID filter limit is 1000"));
             }
             clauses.push(format!("m.id IN ({})", vec!["?"; ids.len()].join(",")));
             arguments.extend(ids.iter().map(|id| Value::Integer(id.0 as i64)));
@@ -75,15 +91,19 @@ impl MailRepository for Archive {
         // Group and page metadata first; enrich only the bounded IDs. Thread
         // members respect the same folder/filter/search scope as their header.
         let matching = format!(
-            "SELECT m.id,m.account,m.thread_key,m.rfc_id,m.date,m.sender,m.subject FROM messages m WHERE {}",
+            "SELECT m.id,m.account,{} AS thread_key,m.date,m.sender,m.subject,
+             EXISTS(SELECT 1 FROM thread_edges e WHERE e.source=m.id AND e.kind='reference') AS has_parent
+             ,EXISTS(SELECT 1 FROM occurrences o WHERE o.message_id=m.id AND o.seen=0) AS unread
+             FROM messages m WHERE {}",
+            crate::thread_graph::KEY,
             clauses.join(" AND ")
         );
         let groups = if query.threaded {
-            "SELECT id,sender,subject,MAX(date) OVER w AS activity,COUNT(*) OVER w AS members,
-             ROW_NUMBER() OVER (PARTITION BY account,thread_key ORDER BY (rfc_id=thread_key) DESC,date,id) AS rank
+            "SELECT id,sender,subject,MAX(date) OVER w AS activity,COUNT(*) OVER w AS members,MAX(unread) OVER w AS unread,
+             ROW_NUMBER() OVER (PARTITION BY account,thread_key ORDER BY has_parent,date,id) AS rank
              FROM matching WINDOW w AS (PARTITION BY account,thread_key)"
         } else {
-            "SELECT id,sender,subject,date AS activity,1 AS members,1 AS rank FROM matching"
+            "SELECT id,sender,subject,date AS activity,1 AS members,1 AS rank,unread FROM matching"
         };
         let text = match query.sort {
             SortField::Date => "''",
@@ -109,17 +129,27 @@ impl MailRepository for Archive {
             String::new()
         };
         arguments.push(((limit + 1) as i64).into());
-        let enrichment = SUMMARY.replace(
-            ",1 FROM messages m",
-            ",p.members,p.activity,p.sort_text FROM messages m JOIN paged p ON p.id=m.id",
-        );
+        let enrichment = SUMMARY
+            .replace(
+                ",1 FROM messages m",
+                ",p.members,p.activity,p.sort_text FROM messages m JOIN paged p ON p.id=m.id",
+            )
+            .replace(
+                "EXISTS(SELECT 1 FROM occurrences o WHERE o.message_id=m.id AND seen=0)",
+                "p.unread",
+            );
         let final_key = if query.sort == SortField::Date {
             "p.activity"
         } else {
             "p.sort_text COLLATE NOCASE"
         };
+        let unread = if query.unread_only {
+            "AND unread=1"
+        } else {
+            ""
+        };
         let sql = format!("WITH matching AS ({matching}), ranked AS ({groups}), representatives AS (
-            SELECT id,activity,members,{text} AS sort_text FROM ranked WHERE rank=1
+            SELECT id,activity,members,unread,{text} AS sort_text FROM ranked WHERE rank=1 {unread}
         ), paged AS (SELECT * FROM representatives {after} ORDER BY {key} {direction},id {direction} LIMIT ?)
         {enrichment} ORDER BY {final_key} {direction},m.id {direction}");
         let mut statement = self.connection.prepare_cached(&sql)?;
@@ -137,12 +167,16 @@ impl MailRepository for Archive {
             .collect::<rusqlite::Result<Vec<_>>>()?;
         let more = rows.len() > limit;
         rows.truncate(limit);
+        let first = rows.first().map(|(_, cursor)| cursor.clone());
+        let last = rows.last().map(|(_, cursor)| cursor.clone());
         let next = more
             .then(|| rows.last().map(|(_, cursor)| cursor.clone()))
             .flatten();
         Ok(MailPage {
             rows: rows.into_iter().map(|(row, _)| row).collect(),
             next,
+            first,
+            last,
         })
     }
 
@@ -152,45 +186,58 @@ impl MailRepository for Archive {
             .query_row(&format!("{SUMMARY} WHERE m.id=?1"), [id.0 as i64], summary)
             .optional()?
             .ok_or(Error::NotFound)?;
-        let (text,html,blob,rfc_message_id) = self.connection.query_row("SELECT b.text,b.html,m.blob,m.rfc_id FROM bodies b JOIN messages m ON m.id=b.message_id WHERE m.id=?1",[id.0 as i64],|row|Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?)))?;
+        let (text,html,blob,rfc_message_id,header_date,received_at) = self.connection.query_row("SELECT b.text,b.html,m.blob,m.rfc_id,m.header_date,m.received_at FROM bodies b JOIN messages m ON m.id=b.message_id WHERE m.id=?1",[id.0 as i64],|row|Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?,row.get(4)?,row.get(5)?)))?;
         Ok(MailDetail {
             summary,
             text,
             html,
             blob,
             rfc_message_id,
+            header_date,
+            received_at,
         })
     }
 
     fn correspondence(&self, id: MessageId, limit: usize) -> Result<Vec<MailSummary>> {
-        // Match directional sender/recipient pairs in both directions; subjects
-        // and thread keys deliberately play no role. Always retain the selection.
-        let sql = format!("{SUMMARY} WHERE m.id=?1 OR ({LIVE} AND EXISTS(
-            SELECT 1 FROM addresses sf JOIN addresses sr ON sr.message_id=sf.message_id
-            JOIN addresses mf ON mf.message_id=m.id JOIN addresses mr ON mr.message_id=m.id
-            WHERE sf.message_id=?1 AND sf.role='from' AND sr.role IN ('to','cc')
-            AND mf.role='from' AND mr.role IN ('to','cc')
-            AND ((sf.address=mf.address AND sr.address=mr.address) OR (sf.address=mr.address AND sr.address=mf.address))
-        ) AND NOT EXISTS(SELECT 1 FROM occurrences o JOIN mailboxes b ON b.id=o.mailbox_id WHERE o.message_id=m.id AND lower(b.name) IN ('junk','spam','trash','deleted items')))
-        ORDER BY m.date DESC,m.id DESC LIMIT ?2");
-        let mut statement = self.connection.prepare_cached(&sql)?;
-        Ok(statement
-            .query_map(params![id.0 as i64, limit.clamp(1, 200) as i64], summary)?
-            .collect::<rusqlite::Result<_>>()?)
+        let limit = limit.clamp(1, 200);
+        let page = self.related_page(
+            &moonmail_core::RelatedQuery {
+                anchor: id,
+                relationship: moonmail_core::Relationship::Correspondence,
+                sort: SortField::Date,
+                ascending: false,
+                before: None,
+            },
+            limit - 1,
+        )?;
+        let mut rows = page.rows;
+        rows.truncate(limit - 1);
+        rows.push(page.anchor);
+        rows.sort_by_key(|row| std::cmp::Reverse((row.date, row.id)));
+        Ok(rows)
     }
 
     fn thread(&self, id: MessageId, limit: usize) -> Result<Vec<MailSummary>> {
         let sql = format!(
-            "{SUMMARY} WHERE {LIVE} AND (m.account,m.thread_key)=(SELECT account,thread_key FROM messages WHERE id=?1) ORDER BY m.date DESC,m.id DESC LIMIT ?2"
+            "{SUMMARY} WHERE {LIVE} AND {} ORDER BY m.date DESC,m.id DESC LIMIT ?2",
+            crate::thread_graph::relation("?1")
         );
         let mut statement = self.connection.prepare_cached(&sql)?;
         Ok(statement
             .query_map(params![id.0 as i64, limit.clamp(1, 200) as i64], summary)?
             .collect::<rusqlite::Result<_>>()?)
     }
+
+    fn related_page(
+        &self,
+        query: &moonmail_core::RelatedQuery,
+        limit: usize,
+    ) -> Result<moonmail_core::RelatedPage> {
+        crate::relationships::page(self, query, limit)
+    }
 }
 
-fn summary(row: &rusqlite::Row<'_>) -> rusqlite::Result<MailSummary> {
+pub(crate) fn summary(row: &rusqlite::Row<'_>) -> rusqlite::Result<MailSummary> {
     let date: i64 = row.get(5)?;
     let date_label = OffsetDateTime::from_unix_timestamp(date)
         .ok()

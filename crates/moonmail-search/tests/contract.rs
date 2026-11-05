@@ -6,6 +6,81 @@ use {
 
 type Result<T = ()> = std::result::Result<T, Box<dyn StdError>>;
 
+#[test]
+fn field_terms_share_one_snapshot_even_when_another_connection_commits_between_terms() -> Result {
+    use moonmail_core::{TextField, TextTerm};
+    let dir = tempfile::tempdir()?;
+    let path = dir.path().join("index.sqlite3");
+    let mut reader = SqliteIndex::open(&path)?;
+    let mut writer = SqliteIndex::open(&path)?;
+    reader.apply(&[IndexChange::Upsert(
+        MessageId(1),
+        &SearchDocument {
+            subject: "alpha".into(),
+            body: "beta".into(),
+            ..Default::default()
+        },
+    )])?;
+    let terms = [
+        TextTerm {
+            field: TextField::Subject,
+            value: "alpha".into(),
+        },
+        TextTerm {
+            field: TextField::Body,
+            value: "beta".into(),
+        },
+        TextTerm {
+            field: TextField::Cc,
+            value: "beta".into(),
+        },
+    ];
+    let mut found = Vec::new();
+    let mut failure = None;
+    reader.visit_terms(&terms, |slot, id| {
+        found.push((slot, id));
+        if slot == 0 {
+            failure = writer
+                .apply(&[IndexChange::Upsert(
+                    MessageId(1),
+                    &SearchDocument {
+                        subject: "other".into(),
+                        body: "other".into(),
+                        ..Default::default()
+                    },
+                )])
+                .err();
+        }
+        true
+    })?;
+    if let Some(error) = failure {
+        return Err(error.into());
+    }
+    assert_eq!(found, vec![(0, MessageId(1)), (1, MessageId(1))]);
+    let mut calls = 0;
+    reader.visit_terms(&terms, |_, _| {
+        calls += 1;
+        true
+    })?;
+    assert_eq!(calls, 0);
+    let terms = [
+        TextTerm {
+            field: TextField::Any,
+            value: "other".into(),
+        },
+        TextTerm {
+            field: TextField::Body,
+            value: "other".into(),
+        },
+    ];
+    reader.visit_terms(&terms, |_, _| {
+        calls += 1;
+        false
+    })?;
+    assert_eq!(calls, 1);
+    Ok(())
+}
+
 #[allow(clippy::expect_used)]
 fn query<'a>(phrases: &'a [&'a str]) -> SearchQuery<'a> {
     SearchQuery {
@@ -130,5 +205,46 @@ fn query_operators_are_literal_and_unicode_is_folded() -> Result {
     // Punctuation is removed by unicode61, leaving the literal token "OR";
     // it must not turn this into an OR/wildcard query matching the other row.
     assert_eq!(index.search(query(&["\" OR *"]))?, [MessageId(1)]);
+    Ok(())
+}
+
+#[test]
+fn streaming_matches_are_complete_literal_and_use_one_snapshot() -> Result {
+    let directory = tempfile::tempdir()?;
+    let path = directory.path().join("search.db");
+    let mut index = SqliteIndex::open(&path)?;
+    let document = SearchDocument {
+        body: "alpha OR beta café".into(),
+        ..Default::default()
+    };
+    let changes: Vec<_> = (1..=1205)
+        .rev()
+        .map(|id| IndexChange::Upsert(MessageId(id), &document))
+        .collect();
+    index.apply(&changes)?;
+    let mut writer = SqliteIndex::open(&path)?;
+    let mut found = Vec::new();
+    let mut write_result = Ok(());
+    index.visit_matches(&["alpha OR beta", "CAFE"], |id| {
+        found.push(id);
+        if found.len() == 1 {
+            write_result = writer.apply(&[
+                IndexChange::Delete(MessageId(1205)),
+                IndexChange::Upsert(MessageId(1206), &document),
+            ]);
+        }
+        true
+    })?;
+    write_result?;
+    assert_eq!(found, (1..=1205).map(MessageId).collect::<Vec<_>>());
+    let mut stopped = Vec::new();
+    index.visit_matches(&["cafe"], |id| {
+        stopped.push(id);
+        stopped.len() < 2
+    })?;
+    assert_eq!(stopped, [MessageId(1), MessageId(2)]);
+    for phrases in [&[][..], &[" "][..], &["absent"][..]] {
+        index.visit_matches(phrases, |_| panic!("empty query/result must not visit"))?;
+    }
     Ok(())
 }

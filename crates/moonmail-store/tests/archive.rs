@@ -151,6 +151,8 @@ fn journal_replay_and_outbox_crash_recovery() -> Result {
         subject: "Hello".into(),
         body: "Synthetic".into(),
         reply_id: String::new(),
+        references: Vec::new(),
+        ..Default::default()
     };
     archive.save_draft(&draft)?;
     let blob = blobs.put(b"From: me@example.com\r\n\r\nSynthetic")?;
@@ -203,5 +205,63 @@ fn failed_ingest_does_not_publish_metadata_and_blobs_detect_corruption() -> Resu
     assert!(blobs.get(&hash).is_err());
     assert!(blobs.put(b"original").is_err());
     assert!(blobs.get("../../outside").is_err());
+    Ok(())
+}
+
+#[test]
+fn correspondence_reserves_space_for_old_and_retired_anchors() -> Result {
+    let dir = tempfile::tempdir()?;
+    let blobs = FileBlobs::new(dir.path());
+    let mut archive = Archive::open(dir.path())?;
+    let inbox = archive.mailbox("me@example.com", "INBOX")?;
+    let anchor = ingest(
+        &mut archive,
+        &blobs,
+        inbox,
+        (1, 1),
+        "alice@example.org",
+        "me@example.com",
+        1,
+    )?;
+    let mut related = Vec::new();
+    for uid in 2..=106 {
+        related.push(ingest(
+            &mut archive,
+            &blobs,
+            inbox,
+            (1, uid),
+            "me@example.com",
+            "alice@example.org",
+            i64::from(uid),
+        )?);
+    }
+    let rows = archive.correspondence(anchor, 100)?;
+    assert_eq!(rows.len(), 100);
+    assert_eq!(rows.last().map(|row| row.id), Some(anchor));
+    assert_eq!(rows[0].id, related[104]);
+    assert_eq!(rows[98].id, related[6]);
+    assert_eq!(archive.correspondence(anchor, 1)?[0].id, anchor);
+    assert_eq!(archive.correspondence(anchor, 0)?.len(), 1);
+    let flags: Vec<_> = (2..=106).map(|uid| (uid, false, false)).collect();
+    archive.reconcile(inbox, 1, &flags)?;
+    assert_eq!(
+        archive.correspondence(anchor, 2)?[1].id,
+        anchor,
+        "retired selection remains visible"
+    );
+    let recipientless = ingest(
+        &mut archive,
+        &blobs,
+        inbox,
+        (1, 107),
+        "alice@example.org",
+        "",
+        0,
+    )?;
+    assert_eq!(archive.correspondence(recipientless, 100)?.len(), 1);
+    assert_eq!(
+        archive.correspondence(recipientless, 100)?[0].id,
+        recipientless
+    );
     Ok(())
 }

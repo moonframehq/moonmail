@@ -22,6 +22,16 @@ fn extraction_contract<P: MimeParser>(parser: P) -> Result {
         ["bob@example.org", "carol@example.net"]
     );
     assert_eq!(plain.cc[0].address, "dave@example.com");
+    let routed = parser.parse(b"From: Author <author@example.org>\r\nReply-To: Team: One <one@example.org>, Two <two@example.org>;\r\nTo: me@example.org\r\nCc: copy@example.org\r\n\r\nReply routing")?;
+    assert_eq!(
+        routed
+            .reply_to
+            .iter()
+            .map(|address| address.address.as_str())
+            .collect::<Vec<_>>(),
+        ["one@example.org", "two@example.org"]
+    );
+    assert_eq!(routed.reply_to[0].name.as_deref(), Some("One"));
     assert_eq!(
         plain.text_body.as_deref().map(str::trim),
         Some("Discuss the quarterly review.")

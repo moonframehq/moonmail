@@ -8,6 +8,7 @@ members = [
   "crates/moonmail-network",
   "crates/moonmail-search",
   "crates/moonmail-store",
+  "crates/moonmail-test-maild",
 ]
 resolver = "3"
 
@@ -18,41 +19,51 @@ rust-version = "1.99"
 version      = "0.1.0"
 
 [workspace.dependencies]
-ammonia            = "4"
-anyhow             = "1"
-core-text          = "21"
-criterion          = "0.8"
-fs2                = "0.4"
-html2text          = "0.16"
-imap               = "=3.0.0-alpha.15"
-imap-proto         = "0.16.7"
-mail-builder       = "2"
-mail-parser        = { features = ["full_encoding"], version = "1.0.1" }
-mail-send          = { default-features = false, features = ["aws_lc_rs", "tls12"], version = "0.7" }
-mailparse          = "0.18"
-moonframe          = { branch = "main", default-features = false, features = ["acp", "browser", "markdown", "studio"], git = "https://github.com/moonframehq/moonframe" }
-moonmail-core      = { path = "crates/moonmail-core" }
-moonmail-mime      = { path = "crates/moonmail-mime" }
-moonmail-network   = { path = "crates/moonmail-network" }
-moonmail-search    = { path = "crates/moonmail-search" }
-moonmail-store     = { path = "crates/moonmail-store" }
-native-tls         = "0.2"
-oauth2             = { default-features = false, version = "5" }
-open               = "5"
-reqwest            = { default-features = false, features = ["blocking", "json", "rustls-tls"], version = "0.12" }
-rpassword          = "7"
-rusqlite           = { features = ["bundled"], version = "0.40.2" }
-security-framework = "=3.7.0"
-serde              = { features = ["derive"], version = "1" }
-serde_json         = "1"
-sha2               = "0.11"
-tempfile           = "3"
-thiserror          = "2"
-time               = { features = ["formatting", "parsing"], version = "0.3" }
-tokio              = { features = ["net", "rt-multi-thread", "time"], version = "1" }
-url                = "2"
-uuid               = { features = ["v4"], version = "1" }
-zeroize            = { features = ["derive"], version = "1" }
+ammonia             = "4"
+anyhow              = "1"
+base64              = "0.22"
+core-text           = "21"
+criterion           = "0.8"
+fs2                 = "0.4"
+html2text           = "0.16"
+image               = { default-features = false, features = ["gif", "jpeg", "png", "webp"], version = "0.25" }
+imap                = "=3.0.0-alpha.15"
+imap-codec          = { default-features = false, features = ["starttls"], version = "=2.0.0-alpha.10" }
+imap-proto          = "0.16.7"
+linkify             = "0.10"
+mail-builder        = "2"
+mail-parser         = { features = ["full_encoding"], version = "1.0.1" }
+mail-send           = { default-features = false, features = ["aws_lc_rs", "tls12"], version = "0.7" }
+mailparse           = "0.18"
+moonframe           = { default-features = false, features = ["acp", "browser", "markdown", "studio"], git = "https://github.com/moonframehq/moonframe", rev = "f8a69f7cc5fe6708ab3f57022995946ba7b93e92" }
+moonmail-core       = { path = "crates/moonmail-core" }
+moonmail-mime       = { path = "crates/moonmail-mime" }
+moonmail-network    = { path = "crates/moonmail-network" }
+moonmail-search     = { path = "crates/moonmail-search" }
+moonmail-store      = { path = "crates/moonmail-store" }
+moonmail-test-maild = { path = "crates/moonmail-test-maild" }
+native-tls          = "0.2"
+oauth2              = { default-features = false, version = "5" }
+open                = "5"
+percent-encoding    = "2"
+rcgen               = { default-features = false, features = ["aws_lc_rs", "pem"], version = "0.14.10" }
+reqwest             = { default-features = false, features = ["blocking", "json", "rustls-tls"], version = "0.12" }
+rpassword           = "7"
+rusqlite            = { features = ["bundled"], version = "0.40.2" }
+rustls              = { default-features = false, features = ["aws_lc_rs", "std", "tls12"], version = "0.23" }
+security-framework  = "=3.7.0"
+serde               = { features = ["derive"], version = "1" }
+serde_json          = "1"
+sha2                = "0.11"
+smtp-proto          = "0.2.5"
+tempfile            = "3"
+thiserror           = "2"
+time                = { features = ["formatting", "parsing"], version = "0.3" }
+tokio               = { features = ["net", "rt-multi-thread", "time"], version = "1" }
+tokio-rustls        = { default-features = false, features = ["aws_lc_rs", "tls12"], version = "0.26" }
+url                 = "2"
+uuid                = { features = ["v4"], version = "1" }
+zeroize             = { features = ["derive"], version = "1" }
 
 [workspace.lints.rust]
 unsafe_code           = "deny"
