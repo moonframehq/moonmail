@@ -2,11 +2,11 @@
 //! are fixed here, never trusted from imported client JSON or a token record.
 use super::*;
 
-#[derive(Serialize, Deserialize, Zeroize, ZeroizeOnDrop)]
+#[derive(Debug, Serialize, Deserialize)]
 struct DesktopClient {
     client_id: String,
-    #[serde(default)]
-    client_secret: String,
+    #[serde(default = "empty_secret", serialize_with = "serialize_secret")]
+    client_secret: SecretString,
 }
 
 struct Endpoints {
@@ -57,8 +57,12 @@ fn parse_client<E: std::error::Error + 'static>(
     if client.client_id.is_empty()
         || client.client_id.len() > 512
         || client.client_id.chars().any(char::is_whitespace)
-        || client.client_secret.len() > 4096
-        || client.client_secret.chars().any(char::is_control)
+        || client.client_secret.expose_secret().len() > 4096
+        || client
+            .client_secret
+            .expose_secret()
+            .chars()
+            .any(char::is_control)
         || (provider == Provider::Google
             && !client.client_id.ends_with(".apps.googleusercontent.com"))
         || (provider == Provider::Microsoft && uuid::Uuid::parse_str(&client.client_id).is_err())
@@ -76,7 +80,7 @@ fn apply_tokens<E: std::error::Error + 'static>(
     initial: bool,
 ) -> Result<(), AuthError<E>> {
     if !tokens.token_type.eq_ignore_ascii_case("bearer")
-        || tokens.access_token.is_empty()
+        || tokens.access_token.expose_secret().is_empty()
         || tokens.expires_in == 0
     {
         return Err(AuthError::Protocol(
@@ -95,14 +99,14 @@ fn apply_tokens<E: std::error::Error + 'static>(
             "Google did not grant IMAP/SMTP mail access",
         ));
     }
-    if initial && tokens.refresh_token.is_empty() {
+    if initial && tokens.refresh_token.expose_secret().is_empty() {
         return Err(AuthError::Protocol(
             "Offline access was not granted; reconnect and consent again",
         ));
     }
     record.access_token.clone_from(&tokens.access_token);
     // Google normally omits refresh_token on refresh; Microsoft can rotate it.
-    if !tokens.refresh_token.is_empty() {
+    if !tokens.refresh_token.expose_secret().is_empty() {
         record.refresh_token.clone_from(&tokens.refresh_token);
     }
     record.expires_at = time::OffsetDateTime::now_utc()
@@ -136,6 +140,7 @@ impl<C: CredentialStore> Auth<C> {
         }
         let _lock = self.store.lock(email).map_err(AuthError::Credentials)?;
         let config = endpoints(provider)?;
+        tracing::debug!(provider = config.key, "starting OAuth sign-in");
         let key = format!("oauth-client:{}", config.key);
         let desktop: DesktopClient = {
             let _lock = self.store.lock(&key).map_err(AuthError::Credentials)?;
@@ -171,8 +176,10 @@ impl<C: CredentialStore> Auth<C> {
         if provider == Provider::Google {
             url.query_pairs_mut().append_pair("access_type", "offline");
         }
+        tracing::debug!(provider = config.key, %redirect, "opening the browser for OAuth");
         open::that(url.as_str())?;
         let code = receive_code(&listener, state.secret(), &redirect, provider)?;
+        tracing::debug!(provider = config.key, "OAuth code received; exchanging it");
         let mut form = vec![
             ("client_id", desktop.client_id.as_str()),
             ("grant_type", "authorization_code"),
@@ -180,8 +187,8 @@ impl<C: CredentialStore> Auth<C> {
             ("code", code.as_str()),
             ("code_verifier", verifier.secret()),
         ];
-        if !desktop.client_secret.is_empty() {
-            form.push(("client_secret", &desktop.client_secret));
+        if !desktop.client_secret.expose_secret().is_empty() {
+            form.push(("client_secret", desktop.client_secret.expose_secret()));
         }
         let tokens: Tokens = client
             .post(config.token)
@@ -193,13 +200,14 @@ impl<C: CredentialStore> Auth<C> {
             provider: config.key.into(),
             client_id: desktop.client_id.clone(),
             client_secret: desktop.client_secret.clone(),
-            password: String::new(),
-            access_token: String::new(),
-            refresh_token: String::new(),
+            password: empty_secret(),
+            access_token: empty_secret(),
+            refresh_token: empty_secret(),
             expires_at: 0,
             refreshing: false,
         };
         apply_tokens(&mut record, &tokens, true)?;
+        tracing::debug!(provider = config.key, "OAuth tokens received; saving them");
         self.save(email, &record)
     }
 
@@ -220,10 +228,10 @@ impl<C: CredentialStore> Auth<C> {
         let mut form = vec![
             ("client_id", record.client_id.as_str()),
             ("grant_type", "refresh_token"),
-            ("refresh_token", record.refresh_token.as_str()),
+            ("refresh_token", record.refresh_token.expose_secret()),
         ];
-        if !record.client_secret.is_empty() {
-            form.push(("client_secret", &record.client_secret));
+        if !record.client_secret.expose_secret().is_empty() {
+            form.push(("client_secret", record.client_secret.expose_secret()));
         }
         let tokens: Tokens = client
             .post(config.token)
@@ -240,10 +248,10 @@ impl<C: CredentialStore> Auth<C> {
     }
 
     pub(super) fn revoke_google(&self, record: &Record) -> Result<(), AuthError<C::Error>> {
-        if !record.refresh_token.is_empty() {
+        if !record.refresh_token.expose_secret().is_empty() {
             self.client()?
                 .post("https://oauth2.googleapis.com/revoke")
-                .form(&[("token", record.refresh_token.as_str())])
+                .form(&[("token", record.refresh_token.expose_secret())])
                 .send()?
                 .error_for_status()?;
         }
@@ -263,20 +271,20 @@ mod tests {
             refresh_token: "original".into(),
             refreshing: true,
             client_id: String::new(),
-            client_secret: String::new(),
-            password: String::new(),
-            access_token: String::new(),
+            client_secret: empty_secret(),
+            password: empty_secret(),
+            access_token: empty_secret(),
             expires_at: 0,
         };
         let mut tokens: Tokens = serde_json::from_str(
             r#"{"access_token":"new","expires_in":3600,"token_type":"Bearer"}"#,
         )?;
         apply_tokens::<std::io::Error>(&mut record, &tokens, false)?;
-        assert_eq!(record.refresh_token, "original");
+        assert_eq!(record.refresh_token.expose_secret(), "original");
         assert!(!record.refreshing);
         tokens.refresh_token = "rotated".into();
         apply_tokens::<std::io::Error>(&mut record, &tokens, false)?;
-        assert_eq!(record.refresh_token, "rotated");
+        assert_eq!(record.refresh_token.expose_secret(), "rotated");
         assert!(apply_tokens::<std::io::Error>(&mut record, &tokens, true).is_err());
         tokens.scope = Some("https://mail.google.com/".into());
         apply_tokens::<std::io::Error>(&mut record, &tokens, true)?;
@@ -286,7 +294,7 @@ mod tests {
     #[test]
     fn desktop_import_and_provider_bound_callbacks_reject_wrong_clients() -> TestResult {
         let client = parse_client::<std::io::Error>(Provider::Google, br#"{"installed":{"client_id":"synthetic.apps.googleusercontent.com","client_secret":"synthetic"}}"#)?;
-        assert_eq!(client.client_secret, "synthetic");
+        assert_eq!(client.client_secret.expose_secret(), "synthetic");
         assert!(
             parse_client::<std::io::Error>(Provider::Google, br#"{"web":{"client_id":"wrong"}}"#)
                 .is_err()

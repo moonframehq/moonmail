@@ -41,7 +41,7 @@ pub fn dispatch(root: &Path, args: &[String]) -> Result<bool> {
             } else {
                 let secret = moonmail_network::LoginSecret {
                     bearer: false,
-                    value: rpassword::prompt_password("App password: ")?,
+                    value: rpassword::prompt_password("App password: ")?.into(),
                 };
                 moonmail_network::check_account(&account, &secret)?;
                 auth.password(email, secret.value.clone())?;
@@ -57,7 +57,7 @@ pub fn dispatch(root: &Path, args: &[String]) -> Result<bool> {
             account.check_registration(root)?;
             let secret = moonmail_network::LoginSecret {
                 bearer: false,
-                value: rpassword::prompt_password("Mail server password: ")?,
+                value: rpassword::prompt_password("Mail server password: ")?.into(),
             };
             moonmail_network::check_account(&account, &secret)?;
             Auth::new(Keychain).password(&account.email, secret.value.clone())?;

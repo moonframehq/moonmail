@@ -1,6 +1,7 @@
 use {
     crate::{
-        Account, Error, LoginSecret, Provider, Result, TlsMode, oauth_bearer, validate_address,
+        Account, Error, ExposeSecret, LoginSecret, Provider, Result, TlsMode, oauth_bearer,
+        validate_address,
     },
     moonmail_core::BlobStore,
     moonmail_store::Draft,
@@ -152,18 +153,18 @@ impl SmtpSubmission {
             ) {
             mail_send::Credentials::new_xoauth2(
                 self.account.smtp_login().to_owned(),
-                self.secret.value.clone(),
+                self.secret.value.expose_secret().to_owned(),
             )
         } else if self.secret.bearer {
             mail_send::Credentials::new_oauth(oauth_bearer(
                 &self.account.smtp_host,
                 self.account.smtp_port,
-                &self.secret.value,
+                self.secret.value.expose_secret(),
             ))
         } else {
             mail_send::Credentials::new(
                 self.account.smtp_login().to_owned(),
-                self.secret.value.clone(),
+                self.secret.value.expose_secret().to_owned(),
             )
         };
         let builder = if let Some(connector) = connector {
@@ -207,7 +208,7 @@ impl SmtpSubmission {
         let payload = format!(
             "user={}\x01auth=Bearer {}\x01\x01",
             self.account.smtp_login(),
-            self.secret.value
+            self.secret.value.expose_secret()
         );
         let reply = client
             .cmd(format!(

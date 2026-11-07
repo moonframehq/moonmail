@@ -74,7 +74,7 @@ impl Peer {
             )?,
             secret: LoginSecret {
                 bearer: false,
-                value: password,
+                value: password.into(),
             },
             root: stage("create disposable archive", tempfile::tempdir())?,
         })

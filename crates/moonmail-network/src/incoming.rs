@@ -1,5 +1,5 @@
 use {
-    crate::{Account, Error, LoginSecret, Provider, Result, TlsMode, oauth_bearer},
+    crate::{Account, Error, ExposeSecret, LoginSecret, Provider, Result, TlsMode, oauth_bearer},
     moonmail_core::{FolderChange, MailboxRole},
     std::{
         net::{TcpStream, ToSocketAddrs},
@@ -280,7 +280,11 @@ impl RustImap {
             let (mechanism, payload) = if capabilities.has_str("AUTH=OAUTHBEARER") {
                 (
                     "OAUTHBEARER",
-                    oauth_bearer(&account.imap_host, account.imap_port, &secret.value),
+                    oauth_bearer(
+                        &account.imap_host,
+                        account.imap_port,
+                        secret.value.expose_secret(),
+                    ),
                 )
             } else if capabilities.has_str("AUTH=XOAUTH2") {
                 (
@@ -288,7 +292,7 @@ impl RustImap {
                     format!(
                         "user={}\x01auth=Bearer {}\x01\x01",
                         account.imap_login(),
-                        secret.value
+                        secret.value.expose_secret()
                     ),
                 )
             } else {
@@ -307,7 +311,7 @@ impl RustImap {
                 .map_err(|(error, _)| error)?
         } else {
             client
-                .login(account.imap_login(), &secret.value)
+                .login(account.imap_login(), secret.value.expose_secret())
                 .map_err(|(error, _)| error)?
         };
         Ok(Self {

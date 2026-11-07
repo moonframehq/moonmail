@@ -2,6 +2,12 @@ use super::*;
 
 impl Mail {
     pub(super) fn handle_account(&mut self, action: &str, message: &Data) -> Result<()> {
+        tracing::debug!(
+            action,
+            provider = message.get("provider").and_then(Data::as_str),
+            session = %crate::account_setup::session(),
+            "account action"
+        );
         let text = |key| {
             message
                 .get(key)
@@ -98,7 +104,7 @@ impl Mail {
             let secret = if password_login {
                 moonmail_network::LoginSecret {
                     bearer: false,
-                    value: crate::account_setup::prompt_password(&email)?,
+                    value: crate::account_setup::prompt_password(&email)?.into(),
                 }
             } else {
                 auth.authorize_provider(provider, &email)?;

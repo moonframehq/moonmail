@@ -177,10 +177,15 @@ return mod {
 			elseif msg.toggle then state.values[msg.toggle] = not state.values[msg.toggle]; return save(state)
 			elseif msg.msg == "font-search" then state.font_search = msg.value
 			elseif msg.msg == "email" then
-				state.email = string.gsub(msg.value, "^%s*(.-)%s*$", "%1")
-				if state.selected_provider == "microsoft" and state.server_config then state.server_config.smtp_host = microsoft_smtp(state.email) end
-				if not state.manual_provider then state.selected_provider = nil end
-				state.lookup_note = nil; state.lookup_pending = false
+				-- The field repeats its value when it is enabled again after a failed
+				-- sign-in; only a real edit forgets the provider it identified.
+				local email = string.gsub(msg.value, "^%s*(.-)%s*$", "%1")
+				if email ~= state.email then
+					state.email = email
+					if state.selected_provider == "microsoft" and state.server_config then state.server_config.smtp_host = microsoft_smtp(state.email) end
+					if not state.manual_provider then state.selected_provider = nil end
+					state.lookup_note = nil; state.lookup_pending = false
+				end
 			end
 		end
 	end,

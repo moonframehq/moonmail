@@ -1095,6 +1095,7 @@ impl Native for Mail {
                                 .into()
                             },
                             Err(error) => {
+                                tracing::warn!(%error, "operation stopped");
                                 self.status = "Operation stopped".into();
                                 self.error = error;
                             },

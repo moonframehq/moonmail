@@ -46,6 +46,18 @@ pub fn prompt_password(_email: &str) -> Result<String> {
     anyhow::bail!("Native password entry currently requires macOS")
 }
 
+/// The macOS session this process runs in, for logs: only `Aqua`, the login
+/// session, can reach the Keychain and show its prompts.
+pub fn session() -> String {
+    std::process::Command::new("/bin/launchctl")
+        .arg("managername")
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_owned())
+        .unwrap_or_else(|| "unknown".to_owned())
+}
+
 pub fn domain_provider(domain: &str) -> Option<&'static str> {
     match domain.to_ascii_lowercase().as_str() {
         "fastmail.com" | "fastmail.fm" | "messagingengine.com" | "pobox.com" => Some("fastmail"),
@@ -122,6 +134,7 @@ pub fn discover(email: &str, lookup_mx: bool) -> Result<Discovery> {
     } else {
         (None, "offline demo")
     };
+    tracing::debug!(provider, source, "account discovery finished");
     Ok(Discovery {
         email: email.into(),
         provider: provider.unwrap_or("unknown").into(),

@@ -8,6 +8,10 @@ use {
 
 #[cfg(any(target_os = "macos", test))]
 const SERVICE: &str = "dev.moonmail.account";
+#[cfg(target_os = "macos")]
+const ITEM_NOT_FOUND: i32 = -25300;
+#[cfg(target_os = "macos")]
+const INTERACTION_NOT_ALLOWED: i32 = -25308;
 
 /// Credentials and their exclusion guard share the same identity scope.
 /// `Auth` holds the guard over the entire read/refresh/write or revoke sequence.
@@ -30,6 +34,13 @@ pub enum KeychainError {
     #[cfg(target_os = "macos")]
     #[error("macOS Keychain operation failed")]
     Mac(#[from] security_framework::base::Error),
+    /// A process outside the login session, as under SSH or a terminal
+    /// multiplexer's server, cannot reach the Keychain or ask to unlock it.
+    #[cfg(target_os = "macos")]
+    #[error(
+        "macOS Keychain is unavailable from this background session; open Moonmail from Finder or a Terminal window, or with `just run`"
+    )]
+    NoLoginSession,
     #[error("stored credential is invalid UTF-8")]
     Utf8(#[from] std::string::FromUtf8Error),
     #[error("persistent account credentials currently require macOS Keychain")]
@@ -66,6 +77,36 @@ fn lock_record(root: &Path, account: &str) -> std::io::Result<File> {
 #[path = "credential_tests.rs"]
 mod tests;
 
+/// What a log may say about a Keychain record: never an account's address.
+#[cfg(target_os = "macos")]
+fn record_kind(account: &str) -> &str {
+    if account.starts_with("oauth-client:") {
+        account
+    } else {
+        "account"
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn failed(
+    operation: &'static str,
+    account: &str,
+    error: security_framework::base::Error,
+) -> KeychainError {
+    tracing::warn!(
+        operation,
+        record = record_kind(account),
+        code = error.code(),
+        %error,
+        "Keychain operation failed"
+    );
+    if error.code() == INTERACTION_NOT_ALLOWED {
+        KeychainError::NoLoginSession
+    } else {
+        error.into()
+    }
+}
+
 #[cfg(target_os = "macos")]
 impl CredentialStore for Keychain {
     type Error = KeychainError;
@@ -82,23 +123,28 @@ impl CredentialStore for Keychain {
     }
     fn load(&self, account: &str) -> Result<Option<String>, Self::Error> {
         match security_framework::passwords::get_generic_password(SERVICE, account) {
-            Ok(bytes) => Ok(Some(String::from_utf8(bytes)?)),
-            Err(error) if error.code() == -25300 => Ok(None),
-            Err(error) => Err(error.into()),
+            Ok(bytes) => {
+                tracing::debug!(record = record_kind(account), "Keychain record loaded");
+                Ok(Some(String::from_utf8(bytes)?))
+            },
+            Err(error) if error.code() == ITEM_NOT_FOUND => {
+                tracing::debug!(record = record_kind(account), "Keychain record not found");
+                Ok(None)
+            },
+            Err(error) => Err(failed("load", account, error)),
         }
     }
     fn save(&self, account: &str, secret: &str) -> Result<(), Self::Error> {
-        Ok(security_framework::passwords::set_generic_password(
-            SERVICE,
-            account,
-            secret.as_bytes(),
-        )?)
+        security_framework::passwords::set_generic_password(SERVICE, account, secret.as_bytes())
+            .map_err(|error| failed("save", account, error))?;
+        tracing::debug!(record = record_kind(account), "Keychain record saved");
+        Ok(())
     }
     fn delete(&self, account: &str) -> Result<(), Self::Error> {
         match security_framework::passwords::delete_generic_password(SERVICE, account) {
             Ok(()) => Ok(()),
-            Err(error) if error.code() == -25300 => Ok(()),
-            Err(error) => Err(error.into()),
+            Err(error) if error.code() == ITEM_NOT_FOUND => Ok(()),
+            Err(error) => Err(failed("delete", account, error)),
         }
     }
 }

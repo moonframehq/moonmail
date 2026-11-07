@@ -37,6 +37,7 @@ pub use {
         CopyOutcome, FolderOutcome, IncomingMail, KeywordOutcome, MoveOutcome, RemoteFolder,
         RemoteMessage, RemoteSnapshot, RemoteUid, RustImap, ScanError,
     },
+    secrecy::{ExposeSecret, SecretString},
     sent_copy::{SentCopyError, save_sent_copy},
     submission::{
         PrepareError, PreparedMessage, SmtpSubmission, Submission, SubmissionFailure, SubmitError,

@@ -2,13 +2,14 @@ use {
     crate::{CredentialStore, Provider},
     oauth2::{CsrfToken, PkceCodeChallenge},
     reqwest::blocking::Client,
+    secrecy::{ExposeSecret, SecretString},
     serde::{Deserialize, Serialize},
     std::{
         io::{BufRead, BufReader, Read, Write},
         net::TcpListener,
         time::{Duration, Instant},
     },
-    zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing},
+    zeroize::Zeroizing,
 };
 
 const ISSUER: &str = "https://api.fastmail.com";
@@ -32,22 +33,39 @@ pub enum AuthError<E: std::error::Error + 'static> {
     Protocol(&'static str),
 }
 
-#[derive(Clone, Zeroize, ZeroizeOnDrop)]
+/// Passwords and tokens stay in `SecretString`: `Debug` redacts them, and
+/// memory is wiped on drop. Reading one takes an explicit `expose_secret`.
+#[derive(Clone, Debug)]
 pub struct LoginSecret {
     pub bearer: bool,
-    pub value: String,
+    pub value: SecretString,
 }
 
-#[derive(Default, Serialize, Deserialize, Zeroize, ZeroizeOnDrop)]
+fn empty_secret() -> SecretString {
+    SecretString::from("")
+}
+
+/// The one way a secret reaches serialized form: the Keychain record.
+fn serialize_secret<S: serde::Serializer>(
+    secret: &SecretString,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    serializer.serialize_str(secret.expose_secret())
+}
+
+#[derive(Debug, Serialize, Deserialize)]
 struct Record {
     #[serde(default)]
     provider: String,
-    #[serde(default)]
-    client_secret: String,
-    password: String,
+    #[serde(default = "empty_secret", serialize_with = "serialize_secret")]
+    client_secret: SecretString,
+    #[serde(serialize_with = "serialize_secret")]
+    password: SecretString,
     client_id: String,
-    access_token: String,
-    refresh_token: String,
+    #[serde(serialize_with = "serialize_secret")]
+    access_token: SecretString,
+    #[serde(serialize_with = "serialize_secret")]
+    refresh_token: SecretString,
     expires_at: i64,
     refreshing: bool,
 }
@@ -66,11 +84,11 @@ struct Registration {
     client_id: String,
 }
 
-#[derive(Deserialize, Zeroize, ZeroizeOnDrop)]
+#[derive(Debug, Deserialize)]
 struct Tokens {
-    access_token: String,
-    #[serde(default)]
-    refresh_token: String,
+    access_token: SecretString,
+    #[serde(default = "empty_secret")]
+    refresh_token: SecretString,
     expires_in: u64,
     token_type: String,
     #[serde(default)]
@@ -127,17 +145,17 @@ impl<C: CredentialStore> Auth<C> {
             .map_err(AuthError::Credentials)
     }
 
-    pub fn password(&self, email: &str, password: String) -> Result<(), AuthError<C::Error>> {
+    pub fn password(&self, email: &str, password: SecretString) -> Result<(), AuthError<C::Error>> {
         let _lock = self.store.lock(email).map_err(AuthError::Credentials)?;
         self.save(
             email,
             &Record {
                 password,
                 provider: String::new(),
-                client_secret: String::new(),
+                client_secret: empty_secret(),
                 client_id: String::new(),
-                access_token: String::new(),
-                refresh_token: String::new(),
+                access_token: empty_secret(),
+                refresh_token: empty_secret(),
                 expires_at: 0,
                 refreshing: false,
             },
@@ -199,8 +217,8 @@ impl<C: CredentialStore> Auth<C> {
         tokens: &Tokens,
     ) -> Result<(), AuthError<C::Error>> {
         if !tokens.token_type.eq_ignore_ascii_case("bearer")
-            || tokens.access_token.is_empty()
-            || tokens.refresh_token.is_empty()
+            || tokens.access_token.expose_secret().is_empty()
+            || tokens.refresh_token.expose_secret().is_empty()
         {
             return Err(AuthError::Protocol(
                 "Fastmail returned an incomplete token response; reconnect the account",
@@ -212,14 +230,14 @@ impl<C: CredentialStore> Auth<C> {
         self.save(
             email,
             &Record {
-                password: String::new(),
+                password: empty_secret(),
                 client_id,
                 access_token: tokens.access_token.clone(),
                 refresh_token: tokens.refresh_token.clone(),
                 expires_at,
                 refreshing: false,
                 provider: String::new(),
-                client_secret: String::new(),
+                client_secret: empty_secret(),
             },
         )
     }
@@ -256,7 +274,7 @@ impl<C: CredentialStore> Auth<C> {
                 "Unrecognized credential provider; reconnect the account",
             ));
         }
-        if !record.password.is_empty() {
+        if !record.password.expose_secret().is_empty() {
             return Ok(LoginSecret {
                 bearer: false,
                 value: record.password.clone(),
@@ -310,7 +328,7 @@ impl<C: CredentialStore> Auth<C> {
             .form(&[
                 ("client_id", record.client_id.as_str()),
                 ("grant_type", "refresh_token"),
-                ("refresh_token", record.refresh_token.as_str()),
+                ("refresh_token", record.refresh_token.expose_secret()),
             ])
             .send()?
             .error_for_status()?
@@ -332,13 +350,13 @@ impl<C: CredentialStore> Auth<C> {
             } else if record.provider == "microsoft" {
                 // Microsoft's delegated desktop flow has no per-token revocation
                 // endpoint. Disconnect removes this app's locally held grant.
-            } else if !record.refresh_token.is_empty() {
+            } else if !record.refresh_token.expose_secret().is_empty() {
                 let client = self.client()?;
                 let metadata = self.discovery(&client)?;
                 client
                     .post(metadata.revocation_endpoint)
                     .form(&[
-                        ("token", record.refresh_token.as_str()),
+                        ("token", record.refresh_token.expose_secret()),
                         ("client_id", record.client_id.as_str()),
                         ("token_type_hint", "refresh_token"),
                     ])
@@ -536,17 +554,49 @@ mod tests {
     }
 
     #[test]
+    fn debug_output_redacts_every_stored_secret_but_the_keychain_keeps_them()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let record = Record {
+            password: "synthetic-password".into(),
+            client_id: "id".into(),
+            access_token: "synthetic-access".into(),
+            refresh_token: "synthetic-refresh".into(),
+            expires_at: 0,
+            refreshing: false,
+            provider: String::new(),
+            client_secret: "synthetic-client".into(),
+        };
+        let tokens: Tokens = serde_json::from_str(
+            r#"{"access_token":"synthetic-access","refresh_token":"synthetic-refresh","expires_in":1,"token_type":"Bearer"}"#,
+        )?;
+        let login = LoginSecret {
+            bearer: true,
+            value: "synthetic-access".into(),
+        };
+        let logged = format!("{record:?} {tokens:?} {login:?}");
+        assert!(!logged.contains("synthetic-"), "{logged}");
+
+        let stored = serde_json::to_string(&record)?;
+        let restored: Record = serde_json::from_str(&stored)?;
+        assert_eq!(restored.password.expose_secret(), "synthetic-password");
+        assert_eq!(restored.client_secret.expose_secret(), "synthetic-client");
+        assert_eq!(restored.access_token.expose_secret(), "synthetic-access");
+        assert_eq!(restored.refresh_token.expose_secret(), "synthetic-refresh");
+        Ok(())
+    }
+
+    #[test]
     fn interrupted_rotating_refresh_requires_reconnect_without_network()
     -> Result<(), Box<dyn std::error::Error>> {
         let record = Record {
-            password: String::new(),
+            password: empty_secret(),
             client_id: "id".into(),
             access_token: "old-access".into(),
             refresh_token: "old-refresh".into(),
             expires_at: 0,
             refreshing: true,
             provider: String::new(),
-            client_secret: String::new(),
+            client_secret: empty_secret(),
         };
         let auth = Auth::new(Stored(serde_json::to_string(&record)?));
         assert!(matches!(

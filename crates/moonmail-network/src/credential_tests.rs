@@ -1,6 +1,6 @@
 use {
     super::*,
-    crate::{Auth, AuthError},
+    crate::{Auth, AuthError, ExposeSecret},
     std::{cell::Cell, io, path::PathBuf, process::Command, rc::Rc, sync::Mutex},
 };
 
@@ -97,7 +97,8 @@ fn independent_auth_instances_lock_before_any_read_write_or_network() -> Result 
         second
             .credentials(ACCOUNT)
             .map_err(|error| format!("read after password: {error:?}"))?
-            .value,
+            .value
+            .expose_secret(),
         "synthetic"
     );
     second
@@ -172,4 +173,19 @@ fn lock_contends_across_processes_and_keeps_a_stable_inode_after_release() -> Re
     drop(held);
     previous.try_lock_exclusive()?;
     Ok(())
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn a_background_session_is_named_rather_than_reported_raw() {
+    let denied = security_framework::base::Error::from_code(INTERACTION_NOT_ALLOWED);
+    let error = failed("save", ACCOUNT, denied);
+    assert!(matches!(error, KeychainError::NoLoginSession));
+    assert!(error.to_string().contains("background session"));
+
+    let other = security_framework::base::Error::from_code(-25299);
+    assert!(matches!(
+        failed("save", ACCOUNT, other),
+        KeychainError::Mac(_)
+    ));
 }

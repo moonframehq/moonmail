@@ -13,6 +13,7 @@ take several minutes.
 ```sh
 just demo                  # launch 72 synthetic messages; no network or credentials
 just run                   # open your own archive (initially empty)
+just debug                 # same, with account logs in target/moonmail-debug.log
 just build                 # target/release/moonmail, with embedded app resources
 just check                 # headless UI check using a temporary synthetic archive
 ```

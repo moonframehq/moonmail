@@ -3,8 +3,13 @@ nightly_toolchain := "nightly-2026-06-20"
 default:
     @just --list
 
+# Runs in the macOS login session, which the Keychain needs: see scripts/run-gui.sh.
 run *args:
-    cargo run --locked -p moonmail-app -- {{args}}
+    scripts/run-gui.sh {{args}}
+
+# `just run` with account and Keychain debug logs in target/moonmail-debug.log.
+debug *args:
+    RUST_LOG=error,moonframe=info,moonmail=debug MOONMAIL_RUN_LOG=target/moonmail-debug.log scripts/run-gui.sh {{args}}
 
 demo:
     MOONMAIL_DEMO=1 cargo run --locked -p moonmail-app
@@ -21,13 +26,13 @@ screenshot output="target/screenshots/moonmail.png" view="mail":
     python3 scripts/capture.py {{quote(output)}} {{quote(view)}}
 
 login email:
-    cargo run --locked -p moonmail-app -- login {{quote(email)}}
+    scripts/run-gui.sh login {{quote(email)}}
 
 password email:
     cargo run --locked -p moonmail-app -- password {{quote(email)}}
 
 sync:
-    cargo run --locked -p moonmail-app -- sync
+    scripts/run-gui.sh sync
 
 import path:
     cargo run --locked -p moonmail-app -- import {{quote(path)}}
