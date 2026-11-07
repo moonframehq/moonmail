@@ -9,7 +9,6 @@ use {
         net::TcpListener,
         time::{Duration, Instant},
     },
-    zeroize::Zeroizing,
 };
 
 const ISSUER: &str = "https://api.fastmail.com";
@@ -139,7 +138,7 @@ impl<C: CredentialStore> Auth<C> {
     }
 
     fn save(&self, email: &str, record: &Record) -> Result<(), AuthError<C::Error>> {
-        let json = Zeroizing::new(serde_json::to_string(record)?);
+        let json = SecretString::from(serde_json::to_string(record)?);
         self.store
             .save(email, &json)
             .map_err(AuthError::Credentials)
@@ -201,7 +200,7 @@ impl<C: CredentialStore> Auth<C> {
                 ("client_id", registration.client_id.as_str()),
                 ("grant_type", "authorization_code"),
                 ("redirect_uri", redirect.as_str()),
-                ("code", code.as_str()),
+                ("code", code.expose_secret()),
                 ("code_verifier", verifier.secret()),
             ])
             .send()?
@@ -259,13 +258,12 @@ impl<C: CredentialStore> Auth<C> {
         account: Option<&crate::Account>,
     ) -> Result<LoginSecret, AuthError<C::Error>> {
         let _lock = self.store.lock(email).map_err(AuthError::Credentials)?;
-        let json = Zeroizing::new(
-            self.store
-                .load(email)
-                .map_err(AuthError::Credentials)?
-                .ok_or(AuthError::Protocol("Connect your account first"))?,
-        );
-        let mut record: Record = serde_json::from_str(&json)?;
+        let json = self
+            .store
+            .load(email)
+            .map_err(AuthError::Credentials)?
+            .ok_or(AuthError::Protocol("Connect your account first"))?;
+        let mut record: Record = serde_json::from_str(json.expose_secret())?;
         if !matches!(
             record.provider.as_str(),
             "" | "fastmail" | "google" | "microsoft"
@@ -343,8 +341,7 @@ impl<C: CredentialStore> Auth<C> {
     pub fn disconnect(&self, email: &str) -> Result<(), AuthError<C::Error>> {
         let _lock = self.store.lock(email).map_err(AuthError::Credentials)?;
         if let Some(json) = self.store.load(email).map_err(AuthError::Credentials)? {
-            let json = Zeroizing::new(json);
-            let record: Record = serde_json::from_str(&json)?;
+            let record: Record = serde_json::from_str(json.expose_secret())?;
             if record.provider == "google" {
                 self.revoke_google(&record)?;
             } else if record.provider == "microsoft" {
@@ -373,7 +370,7 @@ fn receive_code<E: std::error::Error + 'static>(
     state: &str,
     redirect: &str,
     provider: Provider,
-) -> Result<Zeroizing<String>, AuthError<E>> {
+) -> Result<SecretString, AuthError<E>> {
     let deadline = Instant::now() + Duration::from_secs(300);
     while Instant::now() < deadline {
         match listener.accept() {
@@ -418,7 +415,7 @@ fn receive_code<E: std::error::Error + 'static>(
 
 enum Callback {
     Denied,
-    Code(Zeroizing<String>),
+    Code(SecretString),
 }
 
 fn parse_callback_for(
@@ -474,11 +471,12 @@ fn parse_callback_for(
     if code.is_empty() {
         return None;
     }
-    Some(Callback::Code(Zeroizing::new(code.to_string())))
+    Some(Callback::Code(code.to_string().into()))
 }
 
-pub fn oauth_bearer(host: &str, port: u16, token: &str) -> String {
-    format!("n,,\x01host={host}\x01port={port}\x01auth=Bearer {token}\x01\x01")
+pub fn oauth_bearer(host: &str, port: u16, token: &SecretString) -> SecretString {
+    let token = token.expose_secret();
+    format!("n,,\x01host={host}\x01port={port}\x01auth=Bearer {token}\x01\x01").into()
 }
 
 #[cfg(test)]
@@ -524,10 +522,10 @@ mod tests {
         fn lock(&self, _: &str) -> Result<Self::Guard, Self::Error> {
             Ok(())
         }
-        fn load(&self, _: &str) -> Result<Option<String>, Self::Error> {
-            Ok(Some(self.0.clone()))
+        fn load(&self, _: &str) -> Result<Option<SecretString>, Self::Error> {
+            Ok(Some(self.0.clone().into()))
         }
-        fn save(&self, _: &str, _: &str) -> Result<(), Self::Error> {
+        fn save(&self, _: &str, _: &SecretString) -> Result<(), Self::Error> {
             panic!("interrupted refresh must not write or retry")
         }
         fn delete(&self, _: &str) -> Result<(), Self::Error> {

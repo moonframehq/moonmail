@@ -1,5 +1,8 @@
 use {
-    crate::{Account, Error, ExposeSecret, LoginSecret, Provider, Result, TlsMode, oauth_bearer},
+    crate::{
+        Account, Error, ExposeSecret, LoginSecret, Provider, Result, SecretString, TlsMode,
+        oauth_bearer,
+    },
     moonmail_core::{FolderChange, MailboxRole},
     std::{
         net::{TcpStream, ToSocketAddrs},
@@ -212,7 +215,7 @@ pub struct RustImap {
 }
 
 struct Bearer {
-    payload: String,
+    payload: SecretString,
     xoauth2: bool,
 }
 
@@ -220,7 +223,7 @@ impl imap::Authenticator for Bearer {
     type Response = Vec<u8>;
     fn process(&self, challenge: &[u8]) -> Vec<u8> {
         if challenge.is_empty() {
-            self.payload.as_bytes().to_vec()
+            self.payload.expose_secret().as_bytes().to_vec()
         } else if self.xoauth2 {
             Vec::new()
         } else {
@@ -280,11 +283,7 @@ impl RustImap {
             let (mechanism, payload) = if capabilities.has_str("AUTH=OAUTHBEARER") {
                 (
                     "OAUTHBEARER",
-                    oauth_bearer(
-                        &account.imap_host,
-                        account.imap_port,
-                        secret.value.expose_secret(),
-                    ),
+                    oauth_bearer(&account.imap_host, account.imap_port, &secret.value),
                 )
             } else if capabilities.has_str("AUTH=XOAUTH2") {
                 (
@@ -293,7 +292,8 @@ impl RustImap {
                         "user={}\x01auth=Bearer {}\x01\x01",
                         account.imap_login(),
                         secret.value.expose_secret()
-                    ),
+                    )
+                    .into(),
                 )
             } else {
                 return Err(Error::Invalid(

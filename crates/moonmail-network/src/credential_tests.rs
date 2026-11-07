@@ -39,17 +39,17 @@ impl CredentialStore for SharedStore {
     fn lock(&self, account: &str) -> io::Result<File> {
         lock_record(&self.root, account)
     }
-    fn load(&self, account: &str) -> io::Result<Option<String>> {
+    fn load(&self, account: &str) -> io::Result<Option<SecretString>> {
         self.check_locked(account);
         match std::fs::read_to_string(self.root.join("record.json")) {
-            Ok(record) => Ok(Some(record)),
+            Ok(record) => Ok(Some(record.into())),
             Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
             Err(error) => Err(error),
         }
     }
-    fn save(&self, account: &str, secret: &str) -> io::Result<()> {
+    fn save(&self, account: &str, secret: &SecretString) -> io::Result<()> {
         self.check_locked(account);
-        std::fs::write(self.root.join("record.json"), secret)
+        std::fs::write(self.root.join("record.json"), secret.expose_secret())
     }
     fn delete(&self, account: &str) -> io::Result<()> {
         self.check_locked(account);

@@ -1,9 +1,12 @@
-use std::{error::Error, fs::File};
 #[cfg(any(target_os = "macos", test))]
 use {
     fs2::FileExt,
     sha2::{Digest, Sha256},
     std::{fs::OpenOptions, path::Path},
+};
+use {
+    secrecy::SecretString,
+    std::{error::Error, fs::File},
 };
 
 #[cfg(any(target_os = "macos", test))]
@@ -21,8 +24,8 @@ pub trait CredentialStore {
     type Error: Error + Send + Sync + 'static;
     type Guard;
     fn lock(&self, account: &str) -> Result<Self::Guard, Self::Error>;
-    fn load(&self, account: &str) -> Result<Option<String>, Self::Error>;
-    fn save(&self, account: &str, secret: &str) -> Result<(), Self::Error>;
+    fn load(&self, account: &str) -> Result<Option<SecretString>, Self::Error>;
+    fn save(&self, account: &str, secret: &SecretString) -> Result<(), Self::Error>;
     fn delete(&self, account: &str) -> Result<(), Self::Error>;
 }
 
@@ -121,11 +124,11 @@ impl CredentialStore for Keychain {
         )
         .map_err(Into::into)
     }
-    fn load(&self, account: &str) -> Result<Option<String>, Self::Error> {
+    fn load(&self, account: &str) -> Result<Option<SecretString>, Self::Error> {
         match security_framework::passwords::get_generic_password(SERVICE, account) {
             Ok(bytes) => {
                 tracing::debug!(record = record_kind(account), "Keychain record loaded");
-                Ok(Some(String::from_utf8(bytes)?))
+                Ok(Some(String::from_utf8(bytes)?.into()))
             },
             Err(error) if error.code() == ITEM_NOT_FOUND => {
                 tracing::debug!(record = record_kind(account), "Keychain record not found");
@@ -134,9 +137,13 @@ impl CredentialStore for Keychain {
             Err(error) => Err(failed("load", account, error)),
         }
     }
-    fn save(&self, account: &str, secret: &str) -> Result<(), Self::Error> {
-        security_framework::passwords::set_generic_password(SERVICE, account, secret.as_bytes())
-            .map_err(|error| failed("save", account, error))?;
+    fn save(&self, account: &str, secret: &SecretString) -> Result<(), Self::Error> {
+        security_framework::passwords::set_generic_password(
+            SERVICE,
+            account,
+            secrecy::ExposeSecret::expose_secret(secret).as_bytes(),
+        )
+        .map_err(|error| failed("save", account, error))?;
         tracing::debug!(record = record_kind(account), "Keychain record saved");
         Ok(())
     }
@@ -156,10 +163,10 @@ impl CredentialStore for Keychain {
     fn lock(&self, _account: &str) -> Result<Self::Guard, Self::Error> {
         Err(KeychainError::Unsupported)
     }
-    fn load(&self, _account: &str) -> Result<Option<String>, Self::Error> {
+    fn load(&self, _account: &str) -> Result<Option<SecretString>, Self::Error> {
         Err(KeychainError::Unsupported)
     }
-    fn save(&self, _account: &str, _secret: &str) -> Result<(), Self::Error> {
+    fn save(&self, _account: &str, _secret: &SecretString) -> Result<(), Self::Error> {
         Err(KeychainError::Unsupported)
     }
     fn delete(&self, _account: &str) -> Result<(), Self::Error> {

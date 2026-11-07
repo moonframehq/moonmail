@@ -104,7 +104,7 @@ impl Mail {
             let secret = if password_login {
                 moonmail_network::LoginSecret {
                     bearer: false,
-                    value: crate::account_setup::prompt_password(&email)?.into(),
+                    value: crate::account_setup::prompt_password(&email)?,
                 }
             } else {
                 auth.authorize_provider(provider, &email)?;

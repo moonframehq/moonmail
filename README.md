@@ -1,6 +1,24 @@
-# Moonmail
+<p align="center">
+  <img src="crates/moonmail-app/icons/wax-seal.png" width="160" alt="Moonmail: a cream envelope sealed with Moonframe's striped moon, on a teal badge in a brown tile">
+</p>
 
-A runnable, local-first Rust mail client on Moonframe, built around a separate
+<h1 align="center">Moonmail</h1>
+
+<p align="center">
+  A local-first mail client for macOS, built around Correspondence.<br>
+  Your archive stays on your Mac.
+</p>
+
+<p align="center">
+  <a href="#start-here"><b>Start here</b></a> ·
+  <a href="#connect-email-accounts">Connect accounts</a> ·
+  <a href="#local-data-and-import">Local data</a> ·
+  <a href="#current-limits">Current limits</a> ·
+  <a href="#architecture-and-replaceable-implementations">Architecture</a> ·
+  <a href="#development-and-benchmarks">Development</a>
+</p>
+
+Moonmail is a runnable, local-first Rust mail client on [Moonframe](https://moonframe.dev), built around a separate
 MailMate-style **Correspondence** pane. The initial macOS base includes a synthetic
 demo, persistent mail, search, multi-provider authentication, IMAP sync, and SMTP sending.
 

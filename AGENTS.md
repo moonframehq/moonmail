@@ -59,6 +59,12 @@ local archive, MIME/search adapters, Fastmail workers, and comparison harness.
 - Centralize dependency versions and lints in the workspace; inherit in crates.
 - Keep `lib.rs` for module wiring and exports. Keep modules small and focused.
 - Use `thiserror` for typed errors. No production `unwrap`, `expect`, or unsafe.
+- Keep every secret in `secrecy::SecretString` from where it enters to where it
+  leaves: passwords, access and refresh tokens, OAuth codes and client secrets,
+  SASL payloads, and `CredentialStore` records. Call `expose_secret()` only at
+  the boundary that needs the text, such as a request form, a third-party API,
+  or the Keychain record. Never log or format a secret; log its kind or an
+  error code, and keep addresses out of credential logs.
 - Use the pinned stable compiler for builds; the pinned nightly only for rustfmt.
 - Run `just format`, `just ci`, and `just bench-check` when changing contracts or
   backend implementations. Add behavior tests for meaningful failure boundaries.

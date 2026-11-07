@@ -28,21 +28,20 @@ pub fn provider(name: &str) -> Result<moonmail_network::Provider> {
 /// Use a native secure-entry dialog, rather than routing a password through the
 /// Luau workspace, view snapshots, input events, or persisted app state.
 #[cfg(target_os = "macos")]
-pub fn prompt_password(email: &str) -> Result<String> {
+pub fn prompt_password(email: &str) -> Result<moonmail_network::SecretString> {
     let output = std::process::Command::new("/usr/bin/osascript")
         .args(["-e", "on run argv\nset answer to display dialog (\"Enter the app password for \" & item 1 of argv) with title \"Connect to Moonmail\" default answer \"\" with hidden answer buttons {\"Cancel\", \"Connect\"} default button \"Connect\" cancel button \"Cancel\"\nreturn text returned of answer\nend run", email])
         .output()?;
     anyhow::ensure!(output.status.success(), "Account connection cancelled");
-    let mut password = String::from_utf8(output.stdout)?;
-    if password.ends_with('\n') {
-        password.pop();
-    }
-    anyhow::ensure!(!password.is_empty(), "Enter an app password");
-    Ok(password)
+    use moonmail_network::ExposeSecret;
+    let password = moonmail_network::SecretString::from(String::from_utf8(output.stdout)?);
+    let entered = password.expose_secret().trim_end_matches('\n');
+    anyhow::ensure!(!entered.is_empty(), "Enter an app password");
+    Ok(entered.into())
 }
 
 #[cfg(not(target_os = "macos"))]
-pub fn prompt_password(_email: &str) -> Result<String> {
+pub fn prompt_password(_email: &str) -> Result<moonmail_network::SecretString> {
     anyhow::bail!("Native password entry currently requires macOS")
 }
 

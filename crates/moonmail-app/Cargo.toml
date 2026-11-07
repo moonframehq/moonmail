@@ -1,6 +1,7 @@
 [package]
 default-run            = "moonmail"
 edition.workspace      = true
+license.workspace      = true
 name                   = "moonmail-app"
 publish.workspace      = true
 rust-version.workspace = true

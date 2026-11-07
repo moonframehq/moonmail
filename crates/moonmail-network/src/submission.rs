@@ -1,7 +1,7 @@
 use {
     crate::{
-        Account, Error, ExposeSecret, LoginSecret, Provider, Result, TlsMode, oauth_bearer,
-        validate_address,
+        Account, Error, ExposeSecret, LoginSecret, Provider, Result, SecretString, TlsMode,
+        oauth_bearer, validate_address,
     },
     moonmail_core::BlobStore,
     moonmail_store::Draft,
@@ -156,11 +156,15 @@ impl SmtpSubmission {
                 self.secret.value.expose_secret().to_owned(),
             )
         } else if self.secret.bearer {
-            mail_send::Credentials::new_oauth(oauth_bearer(
-                &self.account.smtp_host,
-                self.account.smtp_port,
-                self.secret.value.expose_secret(),
-            ))
+            mail_send::Credentials::new_oauth(
+                oauth_bearer(
+                    &self.account.smtp_host,
+                    self.account.smtp_port,
+                    &self.secret.value,
+                )
+                .expose_secret()
+                .to_owned(),
+            )
         } else {
             mail_send::Credentials::new(
                 self.account.smtp_login().to_owned(),
@@ -205,15 +209,15 @@ impl SmtpSubmission {
             return Ok(());
         }
         use base64::Engine;
-        let payload = format!(
+        let payload = SecretString::from(format!(
             "user={}\x01auth=Bearer {}\x01\x01",
             self.account.smtp_login(),
             self.secret.value.expose_secret()
-        );
+        ));
         let reply = client
             .cmd(format!(
                 "AUTH XOAUTH2 {}\r\n",
-                base64::engine::general_purpose::STANDARD.encode(payload)
+                base64::engine::general_purpose::STANDARD.encode(payload.expose_secret())
             ))
             .await?;
         if reply.code() == 235 {

@@ -126,7 +126,7 @@ impl<C: CredentialStore> Auth<C> {
         let client = parse_client(provider, bytes)?;
         let key = format!("oauth-client:{}", config.key);
         let _lock = self.store.lock(&key).map_err(AuthError::Credentials)?;
-        let json = Zeroizing::new(serde_json::to_string(&client)?);
+        let json = SecretString::from(serde_json::to_string(&client)?);
         self.store.save(&key, &json).map_err(AuthError::Credentials)
     }
 
@@ -144,9 +144,9 @@ impl<C: CredentialStore> Auth<C> {
         let key = format!("oauth-client:{}", config.key);
         let desktop: DesktopClient = {
             let _lock = self.store.lock(&key).map_err(AuthError::Credentials)?;
-            let json = Zeroizing::new(self.store.load(&key).map_err(AuthError::Credentials)?
-                .ok_or(AuthError::Protocol("Import this provider's desktop OAuth client in Internet Accounts first, or use an app password"))?);
-            serde_json::from_str(&json)?
+            let json = self.store.load(&key).map_err(AuthError::Credentials)?
+                .ok_or(AuthError::Protocol("Import this provider's desktop OAuth client in Internet Accounts first, or use an app password"))?;
+            serde_json::from_str(json.expose_secret())?
         };
         let client = self.client()?;
         let listener = TcpListener::bind(("127.0.0.1", 0))?;
@@ -184,7 +184,7 @@ impl<C: CredentialStore> Auth<C> {
             ("client_id", desktop.client_id.as_str()),
             ("grant_type", "authorization_code"),
             ("redirect_uri", redirect.as_str()),
-            ("code", code.as_str()),
+            ("code", code.expose_secret()),
             ("code_verifier", verifier.secret()),
         ];
         if !desktop.client_secret.expose_secret().is_empty() {
