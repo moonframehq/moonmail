@@ -25,6 +25,23 @@ screenshot output="target/screenshots/moonmail.png" view="mail":
     cargo build --locked -p moonmail-app --features capture
     python3 scripts/capture.py {{quote(output)}} {{quote(view)}}
 
+# Retake the README's gallery. GPUI captures leave the native reader blank, so
+# the mail views get the same page rendered by WebKit. Needs ImageMagick.
+screenshots:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cargo build --locked -p moonmail-app --features capture
+    mkdir -p docs/screenshots
+    for view in mail search-results compose settings gmail-setup operations outbox; do
+        python3 scripts/capture.py "docs/screenshots/$view.png" "$view"
+    done
+    for view in mail search-results; do
+        swift scripts/reader_shot.swift "$PWD/docs/screenshots/$view.plain_url.html" target/reader.png 841 343
+        magick "docs/screenshots/$view.png" \( target/reader.png -resize 1682x686! \) -geometry +1318+1148 -composite "docs/screenshots/$view.png"
+    done
+    rm -f docs/screenshots/*.html
+    magick mogrify -resize 1800x -colors 256 docs/screenshots/*.png
+
 login email:
     scripts/run-gui.sh login {{quote(email)}}
 
