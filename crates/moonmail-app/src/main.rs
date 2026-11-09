@@ -76,7 +76,8 @@ fn run() -> Result<ExitCode> {
         .version(env!("CARGO_PKG_VERSION"))
         .icon(icon.png())
         .keep(["feedback"])
-        .embedded_app::<AppFiles>();
+        .embedded_app::<AppFiles>()
+        .project_dir(env!("CARGO_MANIFEST_DIR"));
     let source = concat!(env!("CARGO_MANIFEST_DIR"), "/app");
     if cfg!(debug_assertions) {
         app = app.app_dir(source);
