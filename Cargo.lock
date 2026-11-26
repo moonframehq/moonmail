@@ -5320,6 +5320,7 @@ dependencies = [
  "percent-encoding",
  "rpassword",
  "rusqlite",
+ "rustix",
  "serde",
  "serde_json",
  "tempfile",

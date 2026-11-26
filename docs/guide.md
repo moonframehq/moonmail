@@ -534,6 +534,19 @@ To run locally with the same four secrets already exported in your shell:
 MOONMAIL_LIVE_GMAIL=1 cargo test --locked -p moonmail-network --test gmail_live gmail_round_trip -- --ignored --exact --nocapture
 ```
 
+## Share a live Maildir with Mutt and mbsync
+
+1. Run your existing mbsync channel to populate its local Maildir. For example, if the channel is named `work`, run `mbsync work`. Use a local filesystem with stable inode numbers and atomic exclusive rename support.
+2. In Moonmail, choose **Mail → Connect live Maildir…** and select the Maildir or the directory containing that account’s Maildirs. Its folders appear in the sidebar under **Maildir** followed by the selected path. Moonmail remembers the connection across launches.
+3. Open the same mailbox in Mutt, for example `mutt -f ~/Mail/work/INBOX` if that directory contains `cur` and `new`. Deliver, move or expunge mail in Mutt or through mbsync. Moonmail scans on launch and two seconds after each background pass. Mutt may need a mailbox check or sync to publish its edits.
+4. Mark a message read, unread or starred in Moonmail. The worker merges that change into the current filename, preserves other flag letters and the opaque comma suffix, and moves changed files from `new` into `cur`. The reader’s mark-as-read preference applies here too. Queued edits survive quitting the app. Run mbsync on your usual schedule to exchange those flags with the server.
+
+The account reads published regular files in `new` and `cur`, skips `tmp` and symlinks, and supports nested folders and Maildir++ names such as `.Lists.Rust`. Filenames must be UTF-8 and use the standard unique name with an optional `:2,` suffix. The message size limit is 64 MiB. Remote login, sending, folder operations, and translating IMAP keywords belong to your other mail tools in this workflow.
+
+Each delivery has its own identity, even when two deliveries have identical bytes. An unambiguous rename on the same filesystem preserves that identity. For a copy followed by an unlink within a scan interval, Moonmail can also recognize an unambiguous matching filename stem and identical bytes. A new inode and a new name together are treated as a new delivery. Expunged messages leave live views while their original bytes stay in the archive.
+
+Maildir files are expected to be immutable after publication and clients must use unique delivery names. Moonmail compares file metadata before opening bodies and rechecks directory metadata before retiring missing entries. If a scan encounters an unreadable or partial mailbox, a changing directory, or conflicting filenames, the worker retries. A missing or replaced account root leaves the previous inventory available. Scans run while the app is open. The network Sync and Stop Sync controls apply to server connections.
+
 ## Local data and import
 
 Default archive: `~/Library/Application Support/moonmail/`.

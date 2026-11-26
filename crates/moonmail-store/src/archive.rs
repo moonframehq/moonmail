@@ -27,6 +27,12 @@ pub struct IncomingMessage<'a> {
     pub raw: &'a [u8],
 }
 
+enum Source<'a> {
+    Regular,
+    Staged,
+    Maildir(&'a crate::MaildirLocation),
+}
+
 pub struct IndexWork {
     pub sequence: i64,
     pub id: MessageId,
@@ -49,7 +55,7 @@ impl Archive {
             transaction.pragma_query_value(None, "user_version", |row| row.get(0))?;
         match version {
             0 => transaction.execute_batch(include_str!("schema.sql"))?,
-            1..=24 => {},
+            1..=25 => {},
             version => return Err(Error::Schema(version)),
         }
         if version < 2 {
@@ -139,6 +145,9 @@ impl Archive {
         if version < 24 {
             transaction.execute_batch(include_str!("jmap.sql"))?;
         }
+        if version < 25 {
+            transaction.execute_batch(include_str!("maildir.sql"))?;
+        }
         transaction.commit()?;
         connection.execute_batch(
             "PRAGMA temp_store=FILE;
@@ -196,7 +205,7 @@ impl Archive {
         incoming: IncomingMessage<'_>,
         keywords: &[String],
     ) -> std::result::Result<MessageId, IngestError<P::Error, B::Error>> {
-        self.ingest_observed(parser, blobs, incoming, keywords, None, false)
+        self.ingest_observed(parser, blobs, incoming, keywords, None, Source::Regular)
     }
 
     /// Check that the inventory which supplied these flags and UID is still
@@ -209,7 +218,24 @@ impl Archive {
         keywords: &[String],
         gmail: Option<&crate::GmailMetadata>,
     ) -> std::result::Result<MessageId, IngestError<P::Error, B::Error>> {
-        self.ingest_observed(parser, blobs, incoming, keywords, gmail, true)
+        self.ingest_observed(parser, blobs, incoming, keywords, gmail, Source::Staged)
+    }
+
+    pub fn ingest_maildir<P: MimeParser, B: BlobStore>(
+        &mut self,
+        parser: &P,
+        blobs: &B,
+        incoming: IncomingMessage<'_>,
+        location: &crate::MaildirLocation,
+    ) -> std::result::Result<MessageId, IngestError<P::Error, B::Error>> {
+        self.ingest_observed(
+            parser,
+            blobs,
+            incoming,
+            &[],
+            None,
+            Source::Maildir(location),
+        )
     }
 
     fn ingest_observed<P: MimeParser, B: BlobStore>(
@@ -219,7 +245,7 @@ impl Archive {
         incoming: IncomingMessage<'_>,
         keywords: &[String],
         gmail: Option<&crate::GmailMetadata>,
-        staged: bool,
+        source: Source<'_>,
     ) -> std::result::Result<MessageId, IngestError<P::Error, B::Error>> {
         let keywords = crate::keywords::normalize(keywords)?;
         if incoming.raw.len() > 64 * 1024 * 1024 {
@@ -227,7 +253,7 @@ impl Archive {
         }
         let parsed = parser.parse(incoming.raw).map_err(IngestError::Parser)?;
         let hash = blobs.put(incoming.raw).map_err(IngestError::Blob)?;
-        self.insert_parsed(incoming, parsed, &hash, &keywords, gmail, staged)
+        self.insert_parsed(incoming, parsed, &hash, &keywords, gmail, source)
             .map_err(IngestError::Store)
     }
 
@@ -238,7 +264,7 @@ impl Archive {
         hash: &str,
         keywords: &[String],
         gmail: Option<&crate::GmailMetadata>,
-        staged: bool,
+        source: Source<'_>,
     ) -> Result<MessageId> {
         let text = parsed.text_body.clone().unwrap_or_else(|| {
             parsed
@@ -278,7 +304,7 @@ impl Archive {
             .map(String::as_str)
             .unwrap_or(incoming.origin);
         let transaction = self.connection.transaction()?;
-        if staged {
+        if matches!(source, Source::Staged) {
             let current: bool = transaction.query_row(
                 "SELECT EXISTS(SELECT 1 FROM sync_scope c JOIN mailboxes m ON m.id=c.mailbox
                 JOIN sync_inventory s ON s.uid=?3 WHERE c.mailbox=?1 AND c.epoch=?2 AND c.complete=1
@@ -331,6 +357,12 @@ impl Archive {
             |r| r.get(0),
         )?;
         transaction.execute("INSERT INTO occurrences(mailbox_id,message_id,epoch,uid,seen,flagged) VALUES (?1,?2,?3,?4,?5,?6) ON CONFLICT(mailbox_id,message_id) DO UPDATE SET seen=excluded.seen,flagged=excluded.flagged", params![incoming.mailbox,id,incoming.epoch,incoming.uid,incoming.seen,incoming.starred])?;
+        if let Source::Maildir(location) = source {
+            transaction.execute(
+                "INSERT INTO maildir_files(message,mailbox,stem,fingerprint) VALUES (?1,?2,?3,?4)",
+                params![id, incoming.mailbox, location.stem, location.fingerprint],
+            )?;
+        }
         if let Some(gmail) = gmail {
             transaction.execute(
                 "UPDATE messages SET gm_msgid=?2,gm_thrid=?3,gmail_labels=?4 WHERE id=?1",

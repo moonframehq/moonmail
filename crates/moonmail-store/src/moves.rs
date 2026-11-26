@@ -79,6 +79,7 @@ impl Archive {
                 [id.0 as i64],
                 |row| Ok((row.get(0)?, row.get(1)?)),
             )?;
+            crate::maildir::check_folder_editable(&self.connection, &account)?;
             if gmail && !copy && matches!(target, MoveTarget::Role(MailboxRole::Archive)) {
                 let overridden:bool=self.connection.query_row(
                     "SELECT EXISTS(SELECT 1 FROM mailboxes WHERE account=?1 AND user_role='archive')",

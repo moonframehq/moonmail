@@ -45,11 +45,7 @@ impl Archive {
                     "Finish or cancel selected messages' pending transfers before changing flags",
                 ));
             }
-            tx.execute("INSERT INTO flag_operations(mailbox_id,epoch,uid,kind,value) SELECT mailbox_id,epoch,uid,?2,?3 FROM occurrences WHERE message_id=?1 AND uid IS NOT NULL ON CONFLICT(mailbox_id,epoch,uid,kind) DO UPDATE SET value=excluded.value",params![id.0 as i64,kind,value])?;
-            tx.execute(
-                &format!("UPDATE occurrences SET {column}=?2 WHERE message_id=?1"),
-                params![id.0 as i64, value],
-            )?;
+            set_message_flag(&tx, *id, column, value)?;
         }
         tx.commit()?;
         Ok(ids.len())
@@ -83,6 +79,10 @@ impl Archive {
              ON CONFLICT(mailbox_id,epoch,uid,kind) DO UPDATE SET value=excluded.value", [seen],
         )?;
         transaction.execute(
+            "UPDATE maildir_files SET want_seen=?1 WHERE message IN (SELECT id FROM flag_targets)",
+            [seen],
+        )?;
+        transaction.execute(
             "UPDATE occurrences SET seen=?1 WHERE message_id IN (SELECT id FROM flag_targets)",
             [seen],
         )?;
@@ -104,11 +104,7 @@ impl Archive {
                 "Finish or cancel the pending move before changing flags",
             ));
         }
-        transaction.execute("INSERT INTO flag_operations(mailbox_id,epoch,uid,kind,value) SELECT mailbox_id,epoch,uid,?2,?3 FROM occurrences WHERE message_id=?1 AND uid IS NOT NULL ON CONFLICT(mailbox_id,epoch,uid,kind) DO UPDATE SET value=excluded.value",params![id.0 as i64,kind,value])?;
-        transaction.execute(
-            &format!("UPDATE occurrences SET {column}=?2 WHERE message_id=?1"),
-            params![id.0 as i64, value],
-        )?;
+        set_message_flag(&transaction, id, column, value)?;
         transaction.commit()?;
         Ok(())
     }
@@ -137,4 +133,32 @@ impl Archive {
         )?;
         Ok(())
     }
+}
+
+fn set_message_flag(
+    tx: &rusqlite::Transaction<'_>,
+    id: MessageId,
+    column: &str,
+    value: bool,
+) -> Result<()> {
+    tx.execute(
+        "INSERT INTO flag_operations(mailbox_id,epoch,uid,kind,value)
+         SELECT mailbox_id,epoch,uid,?2,?3 FROM occurrences WHERE message_id=?1 AND uid IS NOT NULL
+         ON CONFLICT(mailbox_id,epoch,uid,kind) DO UPDATE SET value=excluded.value",
+        params![id.0 as i64, column, value],
+    )?;
+    let pending = if column == "seen" {
+        "want_seen"
+    } else {
+        "want_star"
+    };
+    tx.execute(
+        &format!("UPDATE maildir_files SET {pending}=?2 WHERE message=?1"),
+        params![id.0 as i64, value],
+    )?;
+    tx.execute(
+        &format!("UPDATE occurrences SET {column}=?2 WHERE message_id=?1"),
+        params![id.0 as i64, value],
+    )?;
+    Ok(())
 }
