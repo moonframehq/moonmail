@@ -191,6 +191,14 @@ fn populated_ui_actions_reader_search_draft_and_all_panes() -> Result<()> {
     let google = workspace.take_outbox();
     assert_eq!(google.len(), 1);
     assert_eq!(
+        google[0].2.get("action").and_then(Data::as_str),
+        Some("login")
+    );
+    assert_eq!(
+        google[0].2.get("email").and_then(Data::as_str),
+        Some("synthetic@gmail.com")
+    );
+    assert_eq!(
         google[0].2.get("provider").and_then(Data::as_str),
         Some("google")
     );

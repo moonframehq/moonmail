@@ -50,7 +50,8 @@ fn run() -> Result<ExitCode> {
     let args: Vec<_> = std::env::args().skip(1).collect();
     let check = args.iter().any(|arg| arg == "--check")
         || matches!(args.first().map(String::as_str), Some("mockup" | "mockups"));
-    let temporary = if check {
+    let packaging = args.first().is_some_and(|arg| arg == "bundle");
+    let temporary = if check || packaging {
         Some(tempfile::tempdir()?)
     } else {
         None
@@ -82,7 +83,7 @@ fn run() -> Result<ExitCode> {
     if cli::dispatch(&root, &args)? {
         return Ok(ExitCode::SUCCESS);
     }
-    let demo = check || std::env::var_os("MOONMAIL_DEMO").is_some();
+    let demo = !packaging && (check || std::env::var_os("MOONMAIL_DEMO").is_some());
     if demo {
         moonmail_store::seed_demo(
             &mut moonmail_store::Archive::open(&root)?,
