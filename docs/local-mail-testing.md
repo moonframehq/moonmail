@@ -123,7 +123,7 @@ This is not a general-purpose mail server or a full IMAP conformance oracle:
   sections, partial bodies, macros, and unsupported items are rejected.
 - Fixed synthetic INTERNALDATE (`01-Jan-2026`); explicit APPEND dates are rejected.
   No CREATE/RENAME/DELETE, SEARCH, IDLE, OAuth, CONDSTORE/QRESYNC, ordinary EXPUNGE,
-  remote drafts, subscriptions, or unsolicited cross-session change notifications.
+  subscriptions, or unsolicited cross-session change notifications.
   Re-select/re-scan to observe other sessions' changes.
 - Valid unsupported commands return NO; malformed/oversized commands and
   unsupported literal modes close the connection. It does not advertise LITERAL+.

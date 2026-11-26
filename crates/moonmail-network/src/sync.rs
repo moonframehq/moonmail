@@ -13,6 +13,8 @@ pub enum SyncError<E: std::error::Error + 'static> {
     Incomplete(usize),
     #[error("incoming mail operation failed")]
     Incoming(#[source] E),
+    #[error("Remote draft synchronization failed: {0}")]
+    Draft(#[source] Box<Error>),
     #[error(transparent)]
     Store(#[from] moonmail_store::Error),
     #[error(transparent)]
@@ -73,6 +75,12 @@ pub fn synchronize_cancellable<I: IncomingMail>(
     }
     crate::keywords::apply(incoming, &account.email, archive, &mut progress, &cancelled)?;
     crate::moves::apply_moves(incoming, &account.email, archive, &mut progress, &cancelled)?;
+    let drafts = match archive.role_mailbox(&account.email, moonmail_core::MailboxRole::Drafts) {
+        Ok(id) => Some(id),
+        Err(moonmail_store::Error::Invalid(_)) => None,
+        Err(e) => return Err(e.into()),
+    };
+    let mut draft_error = None;
     let mut skipped = 0usize;
     for folder in folders {
         progress(format!("Checking {}", folder.name));
@@ -142,9 +150,26 @@ pub fn synchronize_cancellable<I: IncomingMail>(
                 }
             }
         }
+        if drafts == Some(mailbox) {
+            match crate::remote_drafts::sync(
+                incoming,
+                &account.email,
+                archive,
+                blobs,
+                (&folder.name, mailbox, epoch),
+                &cancelled,
+            ) {
+                Err(e @ SyncError::Draft(_)) => draft_error = Some(e),
+                other => other?,
+            }
+        }
     }
+    crate::remote_drafts::deletions(incoming, &account.email, archive, &cancelled)?;
     check_cancel(&cancelled)?;
     archive.reconcile_sent(&account.email)?;
+    if let Some(error) = draft_error {
+        return Err(error);
+    }
     if skipped > 0 {
         Err(SyncError::Incomplete(skipped))
     } else {
@@ -254,6 +279,7 @@ fn sync_connected_account(
     )
     .map_err(|error| match error {
         SyncError::Incoming(error) => error,
+        SyncError::Draft(error) => *error,
         SyncError::Store(error) => error.into(),
         SyncError::Ingest(error) => error.into(),
         SyncError::Cancelled => Error::Cancelled,

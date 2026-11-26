@@ -204,7 +204,7 @@ fn rule_validation_and_v17_upgrade_preserve_keywords_without_synthetic_entry_eve
     drop(archive);
     let db = rusqlite::Connection::open(dir.path().join("archive.sqlite3"))?;
     db.execute_batch(
-        concat!(include_str!("fixtures/remove_sent_copy.sql"), "DROP TABLE search_partitions; DROP TABLE keyword_rule_runs; DROP TABLE keyword_rules; PRAGMA user_version=17;"),
+        concat!(concat!(include_str!("fixtures/remove_remote_drafts.sql"),include_str!("fixtures/remove_sent_copy.sql")), "DROP TABLE search_partitions; DROP TABLE keyword_rule_runs; DROP TABLE keyword_rules; PRAGMA user_version=17;"),
     )?;
     let archive = Archive::open(dir.path())?;
     assert_eq!(archive.message_keywords(id)?, ["kept"]);

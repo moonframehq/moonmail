@@ -214,7 +214,10 @@ fn local_transfers_labels_live_search_and_v16_migration() -> Result {
     let archive = Archive::open(dir.path())?;
     assert_eq!(archive.saved_search(saved)?.predicate, predicate);
     drop(archive);
-    db.execute_batch(include_str!("fixtures/remove_sent_copy.sql"))?;
+    db.execute_batch(concat!(
+        include_str!("fixtures/remove_remote_drafts.sql"),
+        include_str!("fixtures/remove_sent_copy.sql")
+    ))?;
     db.execute_batch("DROP TABLE search_partitions; DROP TABLE keyword_rule_runs; DROP TABLE keyword_rules; DROP TABLE occurrence_keywords; DROP TABLE keyword_operations; DROP TABLE keyword_labels; PRAGMA user_version=16;")?;
     let archive = Archive::open(dir.path())?;
     assert_eq!(archive.total()?, 1);
@@ -222,7 +225,7 @@ fn local_transfers_labels_live_search_and_v16_migration() -> Result {
     assert!(archive.keyword_operations("a", 0)?.is_empty());
     assert_eq!(
         db.pragma_query_value(None, "user_version", |r| r.get::<_, i64>(0))?,
-        20
+        21
     );
     Ok(())
 }

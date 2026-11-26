@@ -101,6 +101,11 @@ impl Archive {
             seen=CASE WHEN EXISTS(SELECT 1 FROM flag_operations f WHERE f.mailbox_id=o.mailbox_id AND f.epoch=o.epoch AND f.uid=o.uid AND f.kind='seen') THEN seen ELSE (SELECT seen FROM sync_inventory s WHERE s.uid=o.uid) END,
             flagged=CASE WHEN EXISTS(SELECT 1 FROM flag_operations f WHERE f.mailbox_id=o.mailbox_id AND f.epoch=o.epoch AND f.uid=o.uid AND f.kind='flagged') THEN flagged ELSE (SELECT flagged FROM sync_inventory s WHERE s.uid=o.uid) END
             WHERE mailbox_id=?1 AND epoch=?2 AND uid IN (SELECT uid FROM sync_inventory)",params![mailbox,epoch])?;
+        transaction.execute(
+            "DELETE FROM deletion_inventory WHERE mailbox_id=?1 AND (epoch<>?2 OR uid<=?3)",
+            params![mailbox, epoch, upper],
+        )?;
+        transaction.execute("INSERT INTO deletion_inventory SELECT m.id,?2,s.uid FROM mailboxes m CROSS JOIN sync_inventory s WHERE m.id=?1 AND COALESCE(m.user_role,m.server_role) IN ('trash','junk')", params![mailbox,epoch])?;
         transaction.execute("UPDATE sync_scope SET mailbox=?1,complete=1", [mailbox])?;
         transaction.execute("DELETE FROM occurrence_keywords AS k WHERE k.mailbox_id=?1
             AND EXISTS(SELECT 1 FROM occurrences o JOIN sync_inventory s ON s.uid=o.uid WHERE o.mailbox_id=k.mailbox_id AND o.message_id=k.message_id AND o.epoch=?2)

@@ -5,6 +5,7 @@ mod correspondents;
 mod demo;
 mod drafts;
 mod error;
+mod expunge;
 mod folder_operations;
 mod identities;
 mod keywords;
@@ -16,6 +17,7 @@ mod partitions;
 mod predicates;
 mod queries;
 mod relationships;
+mod remote_drafts;
 mod replies;
 mod rules;
 mod saved_searches;
@@ -36,6 +38,7 @@ pub use {
         MAX_DRAFT_ATTACHMENTS,
     },
     error::{Error, IngestError, Result, SearchError},
+    expunge::{DeletionTarget, RemoteOperation},
     folder_operations::{FolderEdit, FolderMember, FolderOperation, FolderOperationSummary},
     identities::Identity,
     keywords::{KeywordLabel, KeywordOperation},
@@ -43,6 +46,7 @@ pub use {
     operations::PendingFlag,
     outbox::{OutboxItem, OutboxPage},
     partitions::{PartitionBucket, PartitionField, PartitionPage},
+    remote_drafts::RemoteDraftSource,
     rules::{KeywordRule, KeywordRuleRun},
     saved_searches::SavedSearch,
     sync_inventory::SyncMessage,

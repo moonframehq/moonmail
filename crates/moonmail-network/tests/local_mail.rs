@@ -85,6 +85,19 @@ impl Fixture {
         )?)
     }
 
+    fn session(
+        &self,
+        peer: &Peer,
+    ) -> Result<imap::Session<native_tls::TlsStream<std::net::TcpStream>>> {
+        let socket = std::net::TcpStream::connect(("127.0.0.1", peer.account.imap_port))?;
+        socket.set_read_timeout(Some(std::time::Duration::from_secs(5)))?;
+        let mut client = imap::Client::new(self.imap.connect("localhost", socket)?);
+        client.read_greeting()?;
+        Ok(client
+            .login(&peer.account.email, PASSWORD)
+            .map_err(|(e, _)| e)?)
+    }
+
     fn sync(&self, peer: &Peer) -> Result {
         synchronize_cancellable(
             &mut self.incoming(peer)?,
@@ -413,5 +426,185 @@ fn plaintext_auth_is_rejected_and_examine_cannot_mutate_flags() -> Result {
         "unsupported FETCH must not silently pass on empty results"
     );
     session.logout()?;
+    Ok(())
+}
+
+#[test]
+fn remote_draft_round_trip_replace_pull_send_and_discard() -> Result {
+    let fixture = Fixture::new(false, false)?;
+    let a = fixture.peer(0, TlsMode::Implicit)?;
+    let b = fixture.peer(0, TlsMode::Implicit)?;
+    let mut draft = Draft {
+        id: "editable".into(),
+        account: a.account.email.clone(),
+        body: "unfinished".into(),
+        ..Default::default()
+    };
+    let store = Archive::open(a.root.path())?;
+    store.save_draft(&draft)?;
+    fixture.sync(&a)?;
+    let mut imap = fixture.incoming(&a)?;
+    let first = imap.snapshot("Drafts")?;
+    assert_eq!(first.messages.len(), 1);
+    assert!(first.messages[0].seen);
+    let old = first.messages[0].uid;
+    let mut observer = fixture.session(&a)?;
+    observer.examine("Drafts")?;
+    let flags = observer.uid_fetch(old.to_string(), "(UID FLAGS)")?;
+    let flags = flags.iter().next().ok_or("missing remote draft")?.flags();
+    assert!(flags.contains(&imap::types::Flag::Draft) && flags.contains(&imap::types::Flag::Seen));
+    draft.subject = "revised".into();
+    draft.bcc = ACCOUNTS[1].into();
+    draft.attachments.push(DraftAttachment {
+        id: "slot".into(),
+        name: "sample.bin".into(),
+        blob: FileBlobs::attachments(a.root.path()).put(b"test")?,
+        bytes: 4,
+    });
+    store.save_draft(&draft)?;
+    fixture.sync(&a)?;
+    let next = imap.snapshot("Drafts")?;
+    assert_eq!(next.messages.len(), 1);
+    assert!(old < next.messages[0].uid);
+    fixture.sync(&b)?;
+    let other = Archive::open(b.root.path())?;
+    let pulled = other.latest_draft()?.ok_or("expected remote draft")?;
+    assert_eq!(pulled.subject, "revised");
+    assert_eq!(pulled.body.trim(), "unfinished");
+    assert_eq!(pulled.bcc, ACCOUNTS[1]);
+    assert_eq!(
+        FileBlobs::attachments(b.root.path()).get(&pulled.attachments[0].blob)?,
+        b"test"
+    );
+    b.send(&fixture, &pulled, false)?;
+    fixture.sync(&b)?;
+    assert!(imap.snapshot("Drafts")?.messages.is_empty());
+    fixture.sync(&a)?;
+    assert_eq!(store.draft_count()?, 0);
+
+    imap.append_draft(
+        "Drafts",
+        b"From: sender@example.org\r\nSubject: foreign\r\n\r\nexternal",
+    )?;
+    fixture.sync(&a)?;
+    let foreign = store.latest_draft()?.ok_or("missing external draft")?;
+    assert_eq!(foreign.subject, "foreign");
+    store.discard_draft(&foreign.id)?;
+    fixture.sync(&a)?;
+    assert!(imap.snapshot("Drafts")?.messages.is_empty());
+    assert_eq!(store.draft_count()?, 0);
+    Ok(())
+}
+
+#[test]
+fn permanent_delete_is_bound_to_folder_epoch_and_confirmed_uids() -> Result {
+    use moonmail_store::DeletionTarget;
+    let fixture = Fixture::new(false, false)?;
+    let a = fixture.peer(0, TlsMode::Implicit)?;
+    let mut imap = fixture.incoming(&a)?;
+    for role in [MailboxRole::Trash, MailboxRole::Junk] {
+        let folder = if role == MailboxRole::Trash {
+            "Trash"
+        } else {
+            "Junk"
+        };
+        imap.append_sent(folder, b"Subject: first\r\n\r\nfirst")?;
+        imap.append_sent(folder, b"Subject: second\r\n\r\nsecond")?;
+        fixture.sync(&a)?;
+        let mut store = Archive::open(a.root.path())?;
+        let mailbox = store.role_mailbox(&a.account.email, role)?;
+        let snapshot = imap.snapshot(folder)?;
+        let first = snapshot.messages[0].uid;
+        let upper = snapshot.messages[1].uid;
+        let mut observer = fixture.session(&a)?;
+        observer.select(folder)?;
+        observer.uid_store(upper.to_string(), "+FLAGS.SILENT (\\Deleted)")?;
+        assert_eq!(
+            imap.expunge_uid(folder, snapshot.epoch.wrapping_add(1), first)?,
+            moonmail_network::ExpungeOutcome::Stale
+        );
+        assert_eq!(imap.snapshot(folder)?.messages.len(), 2);
+        let flags = observer.uid_fetch(first.to_string(), "(UID FLAGS)")?;
+        assert!(
+            !flags
+                .iter()
+                .next()
+                .ok_or("stale preflight removed UID")?
+                .flags()
+                .contains(&imap::types::Flag::Deleted)
+        );
+        let page = store.page(
+            &moonmail_core::MailQuery {
+                mailbox: Some(mailbox),
+                ..Default::default()
+            },
+            10,
+        )?;
+        let first_id = page
+            .rows
+            .iter()
+            .find(|row| row.subject == "first")
+            .ok_or("first occurrence")?
+            .id;
+        store.queue_expunge(
+            &a.account.email,
+            mailbox,
+            folder,
+            snapshot.epoch,
+            role,
+            DeletionTarget::Message(first_id, first),
+        )?;
+        fixture.sync(&a)?;
+        assert_eq!(imap.snapshot(folder)?.messages.len(), 1);
+        store.queue_expunge(
+            &a.account.email,
+            mailbox,
+            folder,
+            snapshot.epoch,
+            role,
+            DeletionTarget::Through(upper),
+        )?;
+        imap.append_sent(folder, b"Subject: later\r\n\r\nkeep")?;
+        fixture.sync(&a)?;
+        let remaining = imap.snapshot(folder)?;
+        assert_eq!(remaining.messages.len(), 1);
+        assert!(remaining.messages[0].uid > upper);
+    }
+    Ok(())
+}
+
+#[test]
+fn scan_recovers_append_without_acknowledgement_by_message_id() -> Result {
+    let fixture = Fixture::new(false, false)?;
+    let peer = fixture.peer(0, TlsMode::Implicit)?;
+    let mut archive = Archive::open(peer.root.path())?;
+    let draft = Draft {
+        id: "interrupted".into(),
+        subject: "unfinished".into(),
+        account: peer.account.email.clone(),
+        ..Default::default()
+    };
+    archive.save_draft(&draft)?;
+    let (_, revision) = archive
+        .dirty_draft(&draft.account, 0)?
+        .ok_or("missing revision")?;
+    let message_id = "synthetic-attempt@moonmail.local";
+    assert!(archive.claim_draft_upload(&draft, revision, "Drafts", message_id)?);
+    let mut incoming = fixture.incoming(&peer)?;
+    incoming.append_draft(
+        "Drafts",
+        format!("Message-ID: <{message_id}>\r\nSubject: unfinished\r\n\r\n").as_bytes(),
+    )?;
+    // The socket worker stopped before writing the APPEND receipt.
+    drop(archive);
+    fixture.sync(&peer)?;
+    let mut archive = Archive::open(peer.root.path())?;
+    assert_eq!(archive.unresolved_remote_count()?, 0);
+    assert_eq!(archive.draft_count()?, 1);
+    assert!(archive.dirty_draft(&draft.account, 0)?.is_none());
+    assert_eq!(incoming.snapshot("Drafts")?.messages.len(), 1);
+    archive.discard_draft(&draft.id)?;
+    fixture.sync(&peer)?;
+    assert!(incoming.snapshot("Drafts")?.messages.is_empty());
     Ok(())
 }

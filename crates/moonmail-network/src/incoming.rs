@@ -43,6 +43,18 @@ pub struct RemoteUid {
     pub exists: bool,
 }
 
+#[derive(Debug, PartialEq, Eq)]
+pub enum DraftAppend {
+    Saved { epoch: u32, uid: u32 },
+    Unverified,
+    Unsupported,
+}
+#[derive(Debug, PartialEq, Eq)]
+pub enum ExpungeOutcome {
+    Removed,
+    Stale,
+    Unsupported,
+}
 pub enum MoveOutcome {
     Moved,
     Unsupported,
@@ -76,6 +88,25 @@ pub enum CopyOutcome {
 /// successful SELECT and complete UID/flag enumeration. Fetch must not mark read.
 pub trait IncomingMail {
     type Error: std::error::Error + Send + Sync + 'static;
+    /// Append one editable MIME message with Draft and Seen flags. A transport
+    /// error can follow a committed append; reconcile the journaled Message-ID.
+    fn append_draft(
+        &mut self,
+        _mailbox: &str,
+        _raw: &[u8],
+    ) -> std::result::Result<DraftAppend, Self::Error> {
+        Ok(DraftAppend::Unsupported)
+    }
+    /// Re-select and verify the epoch before touching flags. Missing in the
+    /// expected epoch counts as removed. Unsupported sends no mutation.
+    fn expunge_uid(
+        &mut self,
+        _mailbox: &str,
+        _epoch: u32,
+        _uid: u32,
+    ) -> std::result::Result<ExpungeOutcome, Self::Error> {
+        Ok(ExpungeOutcome::Unsupported)
+    }
     /// Append exact accepted MIME to Sent. False means unsupported and no
     /// command was dispatched; an error may follow a committed append.
     fn append_sent(
@@ -323,6 +354,46 @@ impl RustImap {
 
 impl IncomingMail for RustImap {
     type Error = Error;
+    fn append_draft(&mut self, mailbox: &str, raw: &[u8]) -> Result<DraftAppend> {
+        let receipt = self
+            .session
+            .append(mailbox, raw)
+            .flag(imap::types::Flag::Draft)
+            .flag(imap::types::Flag::Seen)
+            .finish()?;
+        Ok(match (receipt.uid_validity, receipt.uids.as_deref()) {
+            (Some(epoch), Some([imap_proto::UidSetMember::Uid(uid)])) if epoch > 0 && *uid > 0 => {
+                DraftAppend::Saved { epoch, uid: *uid }
+            },
+            _ => DraftAppend::Unverified,
+        })
+    }
+    fn expunge_uid(&mut self, mailbox: &str, epoch: u32, uid: u32) -> Result<ExpungeOutcome> {
+        if uid == 0 || epoch == 0 {
+            return Ok(ExpungeOutcome::Stale);
+        }
+        let selected = self.select_uid(mailbox, uid)?;
+        if selected.epoch != epoch {
+            return Ok(ExpungeOutcome::Stale);
+        }
+        if !selected.exists {
+            return Ok(ExpungeOutcome::Removed);
+        }
+        Ok(match crate::imap_copy::remove(&mut self.session, uid)? {
+            MoveOutcome::Moved => {
+                if self
+                    .session
+                    .uid_fetch(uid.to_string(), "(UID)")?
+                    .iter()
+                    .any(|f| f.uid == Some(uid))
+                {
+                    return Err(Error::Invalid("Server retained UID after targeted expunge"));
+                }
+                ExpungeOutcome::Removed
+            },
+            MoveOutcome::Unsupported => ExpungeOutcome::Unsupported,
+        })
+    }
     fn append_sent(&mut self, mailbox: &str, raw: &[u8]) -> Result<bool> {
         self.session
             .append(mailbox, raw)

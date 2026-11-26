@@ -113,7 +113,7 @@ just ci
 - No IDLE, CONDSTORE or QRESYNC: new mail arrives on Sync or on the timer, and
   it has not been shown to sync a million messages.
 - No POP3, Exchange (EWS) or Microsoft Graph, and no Gmail-specific labels.
-- Composing is plain text, and drafts stay local.
+- Composing is plain text. Sync exchanges drafts with the account’s mapped Drafts folder.
 - Only one composer window at a time.
 - Local mail is not encrypted by Moonmail, so rely on disk encryption.
 

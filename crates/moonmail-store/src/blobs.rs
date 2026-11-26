@@ -40,6 +40,13 @@ impl FileBlobs {
         }
     }
 
+    pub fn draft_attachments(&self) -> Self {
+        Self {
+            root: self.root.with_file_name("attachments"),
+            extension: "bin",
+        }
+    }
+
     fn path(&self, hash: &str) -> Result<PathBuf, BlobError> {
         if hash.len() != 64 || !hash.bytes().all(|byte| byte.is_ascii_hexdigit()) {
             return Err(BlobError::InvalidHash);

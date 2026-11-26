@@ -1,6 +1,47 @@
 use super::*;
 
 impl Mail {
+    pub(super) fn confirm_expunge(&mut self, action: &str, message: &Data) -> Result<()> {
+        let text = |key| {
+            message
+                .get(key)
+                .and_then(Data::as_str)
+                .context("Missing folder confirmation")
+        };
+        let number = |key| {
+            message
+                .get(key)
+                .and_then(Data::as_i64)
+                .context("Missing confirmation scope")
+        };
+        let account = text("account")?;
+        anyhow::ensure!(
+            !self.demo
+                && Account::load_for(&self.root, account)?.is_some()
+                && message.get("confirmed").and_then(Data::as_bool) == Some(true),
+            "Confirm deletion for a connected account"
+        );
+        let role = MailboxRole::parse(text("role")?).context("Missing folder role")?;
+        let target = if action == "confirm_empty_folder" {
+            moonmail_store::DeletionTarget::Through(number("upper")?.try_into()?)
+        } else {
+            moonmail_store::DeletionTarget::Message(
+                MessageId(number("message")?.try_into()?),
+                number("selected_uid")?.try_into()?,
+            )
+        };
+        let count = self.archive_mut()?.queue_expunge(
+            account,
+            number("id")?,
+            text("name")?,
+            number("epoch")?.try_into()?,
+            role,
+            target,
+        )?;
+        self.status = format!("{count} permanent deletions queued for Sync");
+        Ok(())
+    }
+
     pub(super) fn handle_folder_edit(&mut self, action: &str, message: &Data) -> Result<()> {
         let text = |key| message.get(key).and_then(Data::as_str).unwrap_or_default();
         let id = || {
@@ -144,6 +185,33 @@ mod tests {
                 .pending_folder_edit("me@example.org")?
                 .is_none()
         );
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod expunge_tests {
+    use super::{super::tests::data, *};
+    #[test]
+    fn empty_folder_requires_explicit_confirmation_and_the_original_role_and_epoch() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let account = "me@example.org";
+        Account::fastmail(account)?.save(dir.path())?;
+        let mut archive = Archive::open(dir.path())?;
+        let trash = archive.mailbox(account, "Deleted Items")?;
+        archive.mailbox_server_role(trash, Some(MailboxRole::Trash))?;
+        archive.reconcile(trash, 71, &[])?;
+        let mut mail = Mail::new(dir.path().to_owned(), false);
+        mail.initialize()?;
+        let mut request = json!({"action":"confirm_empty_folder","id":trash,"account":account,"role":"trash","name":"Deleted Items","epoch":71,"upper":4});
+        assert!(mail.handle(data(request.clone())).is_err());
+        request["confirmed"] = json!(true);
+        mail.handle(data(request.clone()))?;
+        request["epoch"] = json!(72);
+        assert!(mail.handle(data(request.clone())).is_err());
+        request["epoch"] = json!(71);
+        request["role"] = json!("drafts");
+        assert!(mail.handle(data(request)).is_err());
         Ok(())
     }
 }
