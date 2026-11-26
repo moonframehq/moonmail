@@ -6,8 +6,8 @@ use {
 
 /// Gmail advertises its archive as \All, including localized folder names.
 /// Keep the mapping provider-scoped; other servers' All folders are virtual views.
-pub(crate) fn provider_roles(provider: crate::Provider, folders: &mut [RemoteFolder]) {
-    if provider == crate::Provider::Google {
+pub(crate) fn provider_roles(gmail: bool, folders: &mut [RemoteFolder]) {
+    if gmail {
         for folder in folders {
             if folder.role == Some(MailboxRole::All) {
                 folder.role = Some(MailboxRole::Archive);
@@ -28,6 +28,13 @@ pub(crate) fn role(name: &str, attributes: &[NameAttribute<'_>]) -> Option<Mailb
             NameAttribute::Drafts => MailboxRole::Drafts,
             NameAttribute::Junk => MailboxRole::Junk,
             NameAttribute::All => MailboxRole::All,
+            NameAttribute::Extension(name)
+                if name
+                    .trim_start_matches('\\')
+                    .eq_ignore_ascii_case("Important") =>
+            {
+                MailboxRole::Important
+            },
             NameAttribute::Flagged => MailboxRole::Flagged,
             _ => return None,
         })
@@ -71,10 +78,12 @@ mod tests {
     #[test]
     fn gmail_all_mail_is_the_archive_but_other_providers_keep_all_separate() -> Result<()> {
         let raw = b"* LIST (\\All) \"/\" \"[Gmail]/Tous les messages\"\r\n* LIST (\\Sent) \"/\" \"[Gmail]/Messages envoyes\"\r\n";
+        let important = parse_list(b"* LIST (\\Important) \"/\" \"Importants\"\r\n")?;
+        assert_eq!(important[0].role, Some(MailboxRole::Important));
         let mut folders = parse_list(raw)?;
-        provider_roles(crate::Provider::Other, &mut folders);
+        provider_roles(false, &mut folders);
         assert_eq!(folders[0].role, Some(MailboxRole::All));
-        provider_roles(crate::Provider::Google, &mut folders);
+        provider_roles(true, &mut folders);
         assert_eq!(folders[0].role, Some(MailboxRole::Archive));
         assert_eq!(folders[1].role, Some(MailboxRole::Sent));
         Ok(())

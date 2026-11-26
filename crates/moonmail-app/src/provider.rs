@@ -520,8 +520,8 @@ impl Mail {
             "rule_save" | "rule_delete" | "rule_apply" | "rule_first" | "rule_next" => {
                 self.handle_rule(&action, &message)?
             },
-            "keyword_set" | "keyword_label" | "keyword_account" | "keyword_next"
-            | "keyword_first" | "keyword_retry" | "keyword_discard" => {
+            "gmail_label_set" | "keyword_set" | "keyword_label" | "keyword_account"
+            | "keyword_next" | "keyword_first" | "keyword_retry" | "keyword_discard" => {
                 self.handle_keyword(&action, &message)?
             },
             "folder_create" | "folder_rename" | "folder_delete" | "folder_cancel"
@@ -623,6 +623,18 @@ impl Mail {
                     "{count} message(s): local {} applied; remote operations queued for next Sync",
                     if copying { "copies" } else { "moves" }
                 );
+            },
+            "folder_sync" => {
+                let id = message
+                    .get("id")
+                    .and_then(Data::as_i64)
+                    .context("Choose a folder")?;
+                let enabled = message
+                    .get("enabled")
+                    .and_then(Data::as_bool)
+                    .context("Choose sync preference")?;
+                self.archive()?.set_sync_enabled(id, enabled)?;
+                self.refresh()?;
             },
             "folder_role" => {
                 let id = message

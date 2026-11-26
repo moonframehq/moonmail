@@ -3,8 +3,8 @@ local function build(props)
 	local account = mail.keyword_account or "local"
 	local keyword, label = state.tag_keyword or "", state.tag_label or ""
 	local same = account == mail.move_account and #(mail.move_selection or {}) > 0
-	local function edit(value, wire)
-		return { action = "keyword_set", account = account, messages = mail.move_selection, scope = mail.mailbox, keyword = wire or keyword, value = value }
+	local function edit(value, wire, gmail)
+		return { action = if gmail then "gmail_label_set" else "keyword_set", account = account, messages = mail.move_selection, scope = mail.mailbox, keyword = wire or keyword, value = value }
 	end
 	local items = {
 		ui.text { "Tags & IMAP keywords", class = "title" },
@@ -20,11 +20,18 @@ local function build(props)
 	end
 	table.insert(items, ui.text { "Selected message keywords: " .. (if #(mail.selected_keywords or {}) > 0 then table.concat(mail.selected_keywords, ", ") else "none"), tone = "muted" })
 	table.insert(items, ui.text { tostring(#(mail.move_selection or {})) .. " selected · " .. account, weight = "semibold" })
-	table.insert(items, ui.input { id = "tag-keyword", value = keyword, placeholder = "Wire keyword, e.g. $Label1 or project-work", change = "tag-keyword" })
+	table.insert(items, ui.input { id = "tag-keyword", value = keyword, placeholder = "IMAP keyword or Gmail label", change = "tag-keyword" })
 	table.insert(items, ui.row {
 		ui.button { label = "Add to selected", small = true, disabled = not same or keyword == "", msg = edit(true) },
 		ui.button { label = "Remove from selected", small = true, disabled = not same or keyword == "", msg = edit(false) },
 	})
+	if mail.selected_gmail_labels and same then
+        table.insert(items, ui.text { "Observed Gmail labels · " .. (if #mail.selected_gmail_labels > 0 then table.concat(mail.selected_gmail_labels, ", ") else "none") })
+        table.insert(items, ui.row {
+            ui.button { label = "Add Gmail label", small = true, disabled = keyword == "", msg = edit(true, keyword, true) },
+            ui.button { label = "Remove Gmail label", small = true, disabled = keyword == "", msg = edit(false, keyword, true) },
+        })
+    end
 	table.insert(items, ui.input { id = "tag-label", value = label, placeholder = "Friendly label (empty removes mapping)", change = "tag-label" })
 	table.insert(items, ui.button { label = "Save label", small = true, disabled = keyword == "", msg = { action = "keyword_label", account = account, keyword = keyword, label = label } })
 	table.insert(items, ui.text { "Account labels · first 500 alphabetically", weight = "semibold" })
@@ -40,7 +47,7 @@ local function build(props)
 	table.insert(items, ui.text { "Pending keyword edits · 100 per page", weight = "semibold" })
 	for _, op in mail.keyword_operations or {} do
 		table.insert(items, ui.column { gap = "small", shrink = false,
-			ui.text { (if op.value then "Add " else "Remove ") .. op.keyword .. " · " .. op.mailbox .. " · UID " .. tostring(op.uid) .. " · " .. op.state },
+			ui.text { (if op.value then "Add " else "Remove ") .. (if op.gmail then "Gmail label " else "keyword ") .. op.keyword .. " · " .. op.mailbox .. " · UID " .. tostring(op.uid) .. " · " .. op.state },
 			if op.detail ~= "" then ui.text { op.detail, tone = "muted" } else nil,
 			if op.state == "blocked" then ui.row {
 				ui.button { label = "Retry on Sync", small = true, disabled = mail.busy, msg = { action = "keyword_retry", account = account, id = op.id } },

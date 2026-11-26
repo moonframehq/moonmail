@@ -33,6 +33,7 @@ local function build(props)
 		if folder.account ~= account then continue end
 		table.insert(items, ui.row { padding = "small", shrink = false, align = "center",
 			ui.column { grow = true, ui.text { folder.name, weight = "semibold", truncate = true }, ui.text { tostring(folder.total) .. " downloaded messages" .. (if not folder.selectable then " · structural folder" else ""), tone = "muted", size = "small" } },
+			if folder.selectable and not mail.demo and account ~= "local" then ui.button { label = if folder.sync_enabled then "Pause sync" else "Enable sync", small = true, msg = { action = "folder_sync", id = folder.id, enabled = not folder.sync_enabled } } else nil,
 			ui.button { label = "Rename…", small = true, disabled = string.lower(folder.name) == "inbox", msg = { folder_edit = folder, mode = "rename" } },
 			ui.button { label = "Delete…", small = true, disabled = string.lower(folder.name) == "inbox", msg = { folder_edit = folder, mode = "delete" } },
 		})

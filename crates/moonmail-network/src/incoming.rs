@@ -16,15 +16,7 @@ pub struct RemoteFolder {
     pub selectable: bool,
     pub role: Option<MailboxRole>,
 }
-pub struct RemoteMessage {
-    pub uid: u32,
-    pub seen: bool,
-    pub starred: bool,
-    pub size: u32,
-    /// Server INTERNALDATE as UTC Unix seconds, not the download time or Date header.
-    pub received_at: i64,
-    pub keywords: Vec<String>,
-}
+pub use moonmail_store::SyncMessage as RemoteMessage;
 pub struct RemoteSnapshot {
     pub epoch: u32,
     pub messages: Vec<RemoteMessage>,
@@ -76,6 +68,9 @@ pub enum CopyOutcome {
 /// successful SELECT and complete UID/flag enumeration. Fetch must not mark read.
 pub trait IncomingMail {
     type Error: std::error::Error + Send + Sync + 'static;
+    fn supports_gmail(&self) -> bool {
+        false
+    }
     /// Append exact accepted MIME to Sent. False means unsupported and no
     /// command was dispatched; an error may follow a committed append.
     fn append_sent(
@@ -135,6 +130,16 @@ pub trait IncomingMail {
         _epoch: u32,
         _uid: u32,
         _keyword: &str,
+        _value: bool,
+    ) -> std::result::Result<KeywordOutcome, Self::Error> {
+        Ok(KeywordOutcome::Unsupported)
+    }
+    fn gmail_label(
+        &mut self,
+        _folder: &str,
+        _epoch: u32,
+        _uid: u32,
+        _label: &str,
         _value: bool,
     ) -> std::result::Result<KeywordOutcome, Self::Error> {
         Ok(KeywordOutcome::Unsupported)
@@ -211,7 +216,9 @@ pub trait IncomingMail {
 
 pub struct RustImap {
     session: imap::Session<native_tls::TlsStream<TcpStream>>,
-    provider: Provider,
+    gmail_folders: bool,
+    special_use: bool,
+    gmail: bool,
 }
 
 struct Bearer {
@@ -278,7 +285,7 @@ impl RustImap {
         if !greeted {
             client.read_greeting()?;
         }
-        let session = if secret.bearer {
+        let mut session = if secret.bearer {
             let capabilities = client.capabilities()?;
             let (mechanism, payload) = if capabilities.has_str("AUTH=OAUTHBEARER") {
                 (
@@ -314,21 +321,44 @@ impl RustImap {
                 .login(account.imap_login(), secret.value.expose_secret())
                 .map_err(|(error, _)| error)?
         };
+        let capabilities = session.capabilities()?;
+        let has_extension = |extension: &str| {
+            capabilities.iter().any(|cap| matches!(cap, imap_proto::Capability::Atom(name) if name.eq_ignore_ascii_case(extension)))
+        };
+        let gmail = has_extension("X-GM-EXT-1");
         Ok(Self {
+            gmail,
             session,
-            provider: account.provider,
+            gmail_folders: gmail || account.provider == Provider::Google,
+            special_use: has_extension("SPECIAL-USE"),
         })
     }
 }
 
 impl IncomingMail for RustImap {
     type Error = Error;
+    fn supports_gmail(&self) -> bool {
+        self.gmail
+    }
     fn append_sent(&mut self, mailbox: &str, raw: &[u8]) -> Result<bool> {
         self.session
             .append(mailbox, raw)
             .flag(imap::types::Flag::Seen)
             .finish()?;
         Ok(true)
+    }
+    fn gmail_label(
+        &mut self,
+        folder: &str,
+        epoch: u32,
+        uid: u32,
+        label: &str,
+        value: bool,
+    ) -> Result<KeywordOutcome> {
+        if !self.gmail {
+            return Ok(KeywordOutcome::Unsupported);
+        }
+        crate::imap_gmail::store(&mut self.session, folder, epoch, uid, label, value)
     }
     fn keyword(
         &mut self,
@@ -351,12 +381,12 @@ impl IncomingMail for RustImap {
         Ok(FolderOutcome::Applied)
     }
     fn folders(&mut self) -> Result<Vec<RemoteFolder>> {
-        if self.session.capabilities()?.has_str("SPECIAL-USE") {
+        if self.special_use {
             let response = self
                 .session
                 .run_command_and_read_response("LIST \"\" \"*\" RETURN (SPECIAL-USE)")?;
             let mut folders = crate::folders::parse_list(&response)?;
-            crate::folders::provider_roles(self.provider, &mut folders);
+            crate::folders::provider_roles(self.gmail_folders, &mut folders);
             return Ok(folders);
         }
         let mut folders: Vec<_> = self
@@ -372,7 +402,7 @@ impl IncomingMail for RustImap {
                 role: crate::folders::role(folder.name(), folder.attributes()),
             })
             .collect();
-        crate::folders::provider_roles(self.provider, &mut folders);
+        crate::folders::provider_roles(self.gmail_folders, &mut folders);
         Ok(folders)
     }
     fn snapshot(&mut self, folder: &str) -> Result<RemoteSnapshot> {
@@ -380,14 +410,7 @@ impl IncomingMail for RustImap {
         let mut messages = Vec::new();
         self.scan(folder, |value, _, batch| {
             epoch = value;
-            messages.extend(batch.iter().map(|m| RemoteMessage {
-                keywords: m.keywords.clone(),
-                uid: m.uid,
-                seen: m.seen,
-                starred: m.starred,
-                size: m.size,
-                received_at: m.received_at,
-            }));
+            messages.extend_from_slice(batch);
             Ok::<_, std::convert::Infallible>(())
         })
         .map_err(|error| match error {
@@ -402,7 +425,7 @@ impl IncomingMail for RustImap {
         folder: &str,
         sink: impl FnMut(u32, u32, &[RemoteMessage]) -> std::result::Result<(), S>,
     ) -> std::result::Result<(), ScanError<Self::Error, S>> {
-        crate::imap_inventory::scan(&mut self.session, folder, sink)
+        crate::imap_inventory::scan(&mut self.session, folder, self.gmail, sink)
     }
     fn fetch(&mut self, uid: u32) -> Result<Option<Vec<u8>>> {
         Ok(self

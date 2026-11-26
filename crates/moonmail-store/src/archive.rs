@@ -46,7 +46,7 @@ impl Archive {
             transaction.pragma_query_value(None, "user_version", |row| row.get(0))?;
         match version {
             0 => transaction.execute_batch(include_str!("schema.sql"))?,
-            1..=20 => {},
+            1..=21 => {},
             version => return Err(Error::Schema(version)),
         }
         if version < 2 {
@@ -124,6 +124,9 @@ impl Archive {
         if version < 20 {
             transaction.execute_batch(include_str!("sent_copy.sql"))?;
         }
+        if version < 21 {
+            transaction.execute_batch(include_str!("gmail.sql"))?;
+        }
         transaction.commit()?;
         connection.execute_batch(
             "PRAGMA temp_store=FILE;
@@ -181,13 +184,24 @@ impl Archive {
         incoming: IncomingMessage<'_>,
         keywords: &[String],
     ) -> std::result::Result<MessageId, IngestError<P::Error, B::Error>> {
+        self.ingest_with_metadata(parser, blobs, incoming, keywords, None)
+    }
+
+    pub fn ingest_with_metadata<P: MimeParser, B: BlobStore>(
+        &mut self,
+        parser: &P,
+        blobs: &B,
+        incoming: IncomingMessage<'_>,
+        keywords: &[String],
+        gmail: Option<&crate::GmailMetadata>,
+    ) -> std::result::Result<MessageId, IngestError<P::Error, B::Error>> {
         let keywords = crate::keywords::normalize(keywords)?;
         if incoming.raw.len() > 64 * 1024 * 1024 {
             return Err(Error::Invalid("message exceeds 64 MiB limit").into());
         }
         let parsed = parser.parse(incoming.raw).map_err(IngestError::Parser)?;
         let hash = blobs.put(incoming.raw).map_err(IngestError::Blob)?;
-        self.insert_parsed(incoming, parsed, &hash, &keywords)
+        self.insert_parsed(incoming, parsed, &hash, &keywords, gmail)
             .map_err(IngestError::Store)
     }
 
@@ -197,6 +211,7 @@ impl Archive {
         parsed: ParsedMessage,
         hash: &str,
         keywords: &[String],
+        gmail: Option<&crate::GmailMetadata>,
     ) -> Result<MessageId> {
         let text = parsed.text_body.clone().unwrap_or_else(|| {
             parsed
@@ -277,6 +292,17 @@ impl Archive {
             |r| r.get(0),
         )?;
         transaction.execute("INSERT INTO occurrences(mailbox_id,message_id,epoch,uid,seen,flagged) VALUES (?1,?2,?3,?4,?5,?6) ON CONFLICT(mailbox_id,message_id) DO UPDATE SET seen=excluded.seen,flagged=excluded.flagged", params![incoming.mailbox,id,incoming.epoch,incoming.uid,incoming.seen,incoming.starred])?;
+        if let Some(gmail) = gmail {
+            transaction.execute(
+                "UPDATE messages SET gm_msgid=?2,gm_thrid=?3,gmail_labels=?4 WHERE id=?1",
+                params![
+                    id,
+                    gmail.msgid.to_be_bytes(),
+                    gmail.thrid.to_be_bytes(),
+                    serde_json::to_string(&gmail.labels)?
+                ],
+            )?;
+        }
         if !present || incoming.uid.is_some() {
             crate::keywords::replace_observed(&transaction, incoming.mailbox, id, keywords)?;
         }

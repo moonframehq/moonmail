@@ -100,7 +100,10 @@ fn version_fifteen_upgrade_keeps_queued_operations_as_moves() -> Result {
     drop(archive);
     let db = rusqlite::Connection::open(dir.path().join("archive.sqlite3"))?;
     db.execute_batch(concat!(
-        include_str!("fixtures/remove_sent_copy.sql"),
+        concat!(
+            include_str!("fixtures/remove_gmail.sql"),
+            include_str!("fixtures/remove_sent_copy.sql")
+        ),
         "DROP TABLE search_partitions; DROP TABLE keyword_rule_runs; DROP TABLE keyword_rules;"
     ))?;
     db.execute_batch("DROP TABLE occurrence_keywords; DROP TABLE keyword_labels; DROP TABLE keyword_operations; ALTER TABLE move_operations DROP COLUMN kind; PRAGMA user_version=15;")?;

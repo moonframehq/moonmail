@@ -1,7 +1,7 @@
 use {
     crate::{Account, Auth, Error, IncomingMail, Keychain, Result, RustImap, ScanError},
     moonmail_mime::StalwartParser,
-    moonmail_store::{Archive, FileBlobs, IncomingMessage, SyncMessage},
+    moonmail_store::{Archive, FileBlobs, IncomingMessage},
     std::path::Path,
 };
 
@@ -57,7 +57,8 @@ pub fn synchronize_cancellable<I: IncomingMail>(
     let parser = StalwartParser::default();
     let mut folders = incoming.folders().map_err(SyncError::Incoming)?;
     check_cancel(&cancelled)?;
-    publish_folders(archive, &account.email, &folders)?;
+    let gmail = incoming.supports_gmail() || account.provider == crate::Provider::Google;
+    publish_folders(archive, &account.email, gmail, &folders)?;
     if crate::folder_operations::apply(
         incoming,
         &account.email,
@@ -69,7 +70,7 @@ pub fn synchronize_cancellable<I: IncomingMail>(
         check_cancel(&cancelled)?;
         folders = incoming.folders().map_err(SyncError::Incoming)?;
         check_cancel(&cancelled)?;
-        publish_folders(archive, &account.email, &folders)?;
+        publish_folders(archive, &account.email, gmail, &folders)?;
     }
     crate::keywords::apply(incoming, &account.email, archive, &mut progress, &cancelled)?;
     crate::moves::apply_moves(incoming, &account.email, archive, &mut progress, &cancelled)?;
@@ -78,7 +79,7 @@ pub fn synchronize_cancellable<I: IncomingMail>(
         progress(format!("Checking {}", folder.name));
         check_cancel(&cancelled)?;
         let mailbox = archive.mailbox(&account.email, &folder.name)?;
-        if !folder.selectable {
+        if !folder.selectable || !archive.sync_enabled(mailbox)? {
             continue;
         }
         let epoch = inventory(incoming, archive, mailbox, &folder.name, &cancelled)?;
@@ -109,11 +110,9 @@ pub fn synchronize_cancellable<I: IncomingMail>(
         loop {
             check_cancel(&cancelled)?;
             let messages = archive.missing_sync_messages(before)?;
-            if messages.is_empty() {
-                break;
-            }
-            for message in messages {
-                before = u64::from(message.uid);
+            let Some(last) = messages.last() else { break };
+            before = u64::from(last.uid);
+            for message in archive.link_cached_messages(mailbox, epoch, messages)? {
                 check_cancel(&cancelled)?;
                 if message.size > 64 * 1024 * 1024 {
                     skipped += 1;
@@ -122,13 +121,19 @@ pub fn synchronize_cancellable<I: IncomingMail>(
                 }
                 if let Some(raw) = incoming.fetch(message.uid).map_err(SyncError::Incoming)? {
                     check_cancel(&cancelled)?;
-                    archive.ingest_with_keywords(
+                    archive.ingest_with_metadata(
                         &parser,
                         blobs,
                         IncomingMessage {
                             account: &account.email,
                             mailbox,
-                            origin: &format!("imap:{mailbox}:{epoch}:{}", message.uid),
+                            origin: &message
+                                .gmail
+                                .as_ref()
+                                .map(|g| format!("imap:gmail:{}", g.msgid))
+                                .unwrap_or_else(|| {
+                                    format!("imap:{mailbox}:{epoch}:{}", message.uid)
+                                }),
                             epoch,
                             uid: Some(message.uid),
                             seen: message.seen,
@@ -137,6 +142,7 @@ pub fn synchronize_cancellable<I: IncomingMail>(
                             raw: &raw,
                         },
                         &message.keywords,
+                        message.gmail.as_ref(),
                     )?;
                     progress(format!("Downloaded {} · UID {}", folder.name, message.uid));
                 }
@@ -155,9 +161,19 @@ pub fn synchronize_cancellable<I: IncomingMail>(
 fn publish_folders(
     archive: &mut Archive,
     account: &str,
+    gmail: bool,
     folders: &[crate::RemoteFolder],
 ) -> moonmail_store::Result<()> {
-    archive.reconcile_mailboxes(account, folders.iter().map(|folder| folder.name.as_str()))?;
+    archive.discover_mailboxes(
+        account,
+        folders.iter().map(|folder| {
+            let important = folder.role == Some(moonmail_core::MailboxRole::Important)
+                || ["[Gmail]/Important", "[Google Mail]/Important"]
+                    .iter()
+                    .any(|name| folder.name.eq_ignore_ascii_case(name));
+            (folder.name.as_str(), !gmail || !important)
+        }),
+    )?;
     for folder in folders {
         let mailbox = archive.mailbox(account, &folder.name)?;
         archive.mailbox_hierarchy(mailbox, folder.delimiter.as_deref(), folder.selectable)?;
@@ -182,18 +198,7 @@ fn inventory<I: IncomingMail>(
                     "Incoming adapter exceeded inventory batch limit",
                 )));
             }
-            let messages: Vec<_> = batch
-                .iter()
-                .map(|m| SyncMessage {
-                    keywords: m.keywords.clone(),
-                    uid: m.uid,
-                    seen: m.seen,
-                    starred: m.starred,
-                    size: m.size,
-                    received_at: m.received_at,
-                })
-                .collect();
-            archive.stage_sync_inventory(epoch, upper, &messages)?;
+            archive.stage_sync_inventory(epoch, upper, batch)?;
             check_cancel(cancelled)
         })
         .map_err(|error| match error {

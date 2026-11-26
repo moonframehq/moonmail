@@ -36,6 +36,7 @@ impl IncomingMail for Streamed {
         for start in (1..=self.count).step_by(67) {
             let batch: Vec<_> = (start..=(start + 66).min(self.count))
                 .map(|uid| RemoteMessage {
+                    gmail: None,
                     keywords: Vec::new(),
                     uid,
                     seen: true,

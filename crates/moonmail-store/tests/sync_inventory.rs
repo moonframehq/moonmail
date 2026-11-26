@@ -7,6 +7,7 @@ type Result<T = ()> = std::result::Result<T, Box<dyn std::error::Error>>;
 
 fn item(uid: u32) -> SyncMessage {
     SyncMessage {
+        gmail: None,
         keywords: Vec::new(),
         uid,
         seen: true,

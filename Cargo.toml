@@ -23,6 +23,7 @@ version      = "0.1.0"
 ammonia             = "4"
 anyhow              = "1"
 base64              = "0.22"
+chrono              = { default-features = false, features = ["std"], version = "0.4" }
 core-text           = "21"
 criterion           = "0.8"
 fs2                 = "0.4"

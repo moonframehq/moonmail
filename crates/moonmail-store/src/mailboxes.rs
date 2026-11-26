@@ -85,16 +85,43 @@ impl Archive {
         account: &str,
         names: impl IntoIterator<Item = &'a str>,
     ) -> Result<()> {
+        self.discover_mailboxes(account, names.into_iter().map(|name| (name, true)))
+    }
+
+    pub fn sync_enabled(&self, id: i64) -> Result<bool> {
+        Ok(self.connection.query_row(
+            "SELECT sync_enabled FROM mailboxes WHERE id=?1",
+            [id],
+            |r| r.get(0),
+        )?)
+    }
+
+    pub fn set_sync_enabled(&self, id: i64, enabled: bool) -> Result<()> {
+        if self.connection.execute(
+            "UPDATE mailboxes SET sync_enabled=?2 WHERE id=?1 AND active AND selectable",
+            params![id, enabled],
+        )? != 1
+        {
+            return Err(Error::NotFound);
+        }
+        Ok(())
+    }
+
+    pub fn discover_mailboxes<'a>(
+        &mut self,
+        account: &str,
+        folders: impl IntoIterator<Item = (&'a str, bool)>,
+    ) -> Result<()> {
         let transaction = self.connection.transaction()?;
         transaction.execute_batch(
             "CREATE TEMP TABLE IF NOT EXISTS listed_mailboxes(name TEXT PRIMARY KEY);
              DELETE FROM listed_mailboxes;",
         )?;
-        for name in names {
+        for (name, enabled) in folders {
             transaction.execute("INSERT INTO listed_mailboxes VALUES (?1)", [name])?;
             transaction.execute(
-                "INSERT INTO mailboxes(account,name) VALUES (?1,?2) ON CONFLICT DO NOTHING",
-                params![account, name],
+                "INSERT INTO mailboxes(account,name,sync_enabled) VALUES (?1,?2,?3) ON CONFLICT DO NOTHING",
+                params![account, name, enabled],
             )?;
         }
         transaction.execute(

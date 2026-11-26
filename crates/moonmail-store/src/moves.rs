@@ -74,20 +74,35 @@ impl Archive {
             if resolved.iter().any(|(previous, _)| previous == id) {
                 continue;
             }
-            let account: String = self.connection.query_row(
-                "SELECT account FROM messages WHERE id=?1",
+            let (account, gmail): (String, bool) = self.connection.query_row(
+                "SELECT account,gm_msgid IS NOT NULL FROM messages WHERE id=?1",
                 [id.0 as i64],
-                |row| row.get(0),
+                |row| Ok((row.get(0)?, row.get(1)?)),
             )?;
+            if gmail && !copy && matches!(target, MoveTarget::Role(MailboxRole::Archive)) {
+                let overridden:bool=self.connection.query_row(
+                    "SELECT EXISTS(SELECT 1 FROM mailboxes WHERE account=?1 AND user_role='archive')",
+                    [&account],|row|row.get(0)
+                )?;
+                if !overridden {
+                    resolved.push((*id, None));
+                    continue;
+                }
+            }
             let destination = match target {
                 MoveTarget::Folder(id) => id,
                 MoveTarget::Role(role) => self.role_mailbox(&account, role)?,
             };
-            resolved.push((*id, destination));
+            resolved.push((*id, Some(destination)));
         }
         let transaction = self.connection.transaction()?;
         let mut count = 0;
         for (id, destination) in resolved {
+            let Some(destination) = destination else {
+                crate::gmail::queue_label(&transaction, id, "\\Inbox", false)?;
+                count += 1;
+                continue;
+            };
             let mut statement = transaction.prepare("SELECT o.mailbox_id,o.epoch,o.uid,o.seen,o.flagged,b.account FROM occurrences o JOIN mailboxes b ON b.id=o.mailbox_id WHERE o.message_id=?1 AND b.active=1 AND b.selectable=1 AND (?2 IS NULL OR o.mailbox_id=?2) LIMIT 2")?;
             let origins = statement
                 .query_map(params![id.0 as i64, source], |row| {

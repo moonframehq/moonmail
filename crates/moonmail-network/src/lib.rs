@@ -12,6 +12,7 @@ mod forwarding;
 mod identities;
 mod imap_copy;
 mod imap_folders;
+mod imap_gmail;
 mod imap_inventory;
 mod imap_keywords;
 mod imap_tls;

@@ -25,6 +25,16 @@ impl Mail {
         snapshot["keyword_operations"] = json!(operations);
         snapshot["keyword_labels"] = json!(self.archive()?.keyword_labels(&account)?);
         snapshot["keyword_account"] = json!(account);
+        snapshot["selected_gmail_labels"] = json!(
+            self.selected
+                .as_ref()
+                .map(|m| self
+                    .archive()?
+                    .gmail_labels(m.summary.id)
+                    .map_err(anyhow::Error::from))
+                .transpose()?
+                .flatten()
+        );
         snapshot["selected_keywords"] = json!(
             self.selected
                 .as_ref()
@@ -59,7 +69,7 @@ impl Mail {
             "Tag account changed; reopen Tags"
         );
         match action {
-            "keyword_set" => {
+            "gmail_label_set" | "keyword_set" => {
                 let ids = self.move_selection();
                 self.validate_move_choice(message, &ids)?;
                 anyhow::ensure!(
@@ -70,12 +80,16 @@ impl Mail {
                     .get("value")
                     .and_then(Data::as_bool)
                     .context("Choose add or remove")?;
-                let count = self
-                    .archive_mut()?
-                    .set_keywords(&ids, text("keyword"), value)?;
+                let count = if action == "gmail_label_set" {
+                    self.archive_mut()?
+                        .set_gmail_labels(&ids, text("keyword"), value)?
+                } else {
+                    self.archive_mut()?
+                        .set_keywords(&ids, text("keyword"), value)?
+                };
                 self.refresh()?;
                 self.status = format!(
-                    "Updated keywords on {count} selected message(s); remote edits upload on Sync"
+                    "Updated tag intent on {count} selected message(s); remote edits upload on Sync"
                 );
             },
             "keyword_label" => {

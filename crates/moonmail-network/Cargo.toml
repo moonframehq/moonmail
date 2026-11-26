@@ -8,6 +8,7 @@ version.workspace      = true
 
 [dependencies]
 base64.workspace         = true
+chrono.workspace         = true
 fs2.workspace            = true
 imap.workspace           = true
 imap-proto.workspace     = true

@@ -110,6 +110,7 @@ impl IncomingMail for Server {
                 .ok_or_else(|| io::Error::other("folder missing"))?
                 .iter()
                 .map(|(uid, k)| RemoteMessage {
+                    gmail: None,
                     uid: *uid,
                     keywords: k.iter().cloned().collect(),
                     seen: false,
