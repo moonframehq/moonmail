@@ -20,6 +20,9 @@ build:
 check:
     cargo run --locked -p moonmail-app -- --check --no-user
 
+mockup *args:
+    cargo run --locked -p moonmail-app --features capture -- mockup {{args}}
+
 # Capture the real GPUI layout with isolated demo data; excludes native WebKit.
 screenshot output="target/screenshots/moonmail.png" view="mail":
     cargo build --locked -p moonmail-app --features capture

@@ -1054,3 +1054,79 @@ fn queue_only_restoration_and_cancellation_preserve_other_drafts_without_network
     assert!(mail.job.is_none());
     Ok(())
 }
+
+fn bundled_workspace() -> Result<Workspace> {
+    let metadata = std::process::Command::new("cargo")
+        .args(["metadata", "--locked", "--format-version=1"])
+        .output()?;
+    assert!(metadata.status.success());
+    let metadata: Value = serde_json::from_slice(&metadata.stdout)?;
+    let manifest = metadata["packages"]
+        .as_array()
+        .context("No packages")?
+        .iter()
+        .find(|p| p["name"] == "moonframe")
+        .and_then(|p| p["manifest_path"].as_str())
+        .context("No Moonframe package")?;
+    let toolbox = PathBuf::from(manifest)
+        .parent()
+        .and_then(|p| p.parent())
+        .and_then(|p| p.parent())
+        .context("No toolbox root")?
+        .join("app");
+    Ok(Workspace::open(
+        Roots::bundled(
+            toolbox,
+            Vec::new(),
+            AppLayer {
+                path: PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/app")),
+                keep: vec!["feedback".into()],
+            },
+        ),
+        false,
+    ))
+}
+
+#[test]
+fn layout_switching_persists_validates_and_renders_all_three_modes() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    moonmail_store::seed_demo(&mut Archive::open(dir.path())?, &FileBlobs::new(dir.path()))?;
+    let mut mail =
+        Mail::new(dir.path().to_owned(), true).with_font_config(dir.path().join("ui/style.luau"));
+    mail.initialize()?;
+    assert_eq!(mail.preferences.layout, crate::layout::Layout::Mail);
+    assert!(
+        mail.handle(data(json!({"action":"layout","value":"unknown"})))
+            .is_err()
+    );
+    assert_eq!(mail.preferences.layout, crate::layout::Layout::Mail);
+
+    let mut workspace = bundled_workspace()?;
+    for (name, expected) in [
+        ("mailmate", crate::layout::Layout::MailMate),
+        ("mail", crate::layout::Layout::Mail),
+        ("moonmail", crate::layout::Layout::Moonmail),
+    ] {
+        mail.handle(data(json!({"action":"layout","value":name})))?;
+        assert_eq!(mail.preferences.layout, expected);
+        assert_eq!(
+            crate::fonts::Preferences::load(dir.path())?.layout,
+            expected
+        );
+        workspace.set_host("mail", data(mail.snapshot()?));
+        assert!(
+            workspace.problems().is_empty(),
+            "layout {name} problems: {:?}",
+            workspace.problems()
+        );
+    }
+    mail.handle(data(json!({"action":"settings_save","interface_family":".AppleSystemUIFont","list_family":"Menlo","font_size":"12","reader_family":"Helvetica","reader_size":"12"})))?;
+    assert_eq!(
+        mail.preferences.layout,
+        crate::layout::Layout::Moonmail,
+        "other settings preserve chosen layout"
+    );
+    mail.handle(data(json!({"action":"settings_save","interface_family":".AppleSystemUIFont","list_family":"Menlo","font_size":"12","reader_family":"Helvetica","reader_size":"12","layout":"mailmate"})))?;
+    assert_eq!(mail.preferences.layout, crate::layout::Layout::MailMate);
+    Ok(())
+}

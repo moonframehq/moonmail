@@ -104,38 +104,161 @@ local function rows(messages, selected_id, related, key, threaded, layout)
 	}
 end
 
-local function tool(icon, tip, msg, to, disabled, on)
-	return ui.row { width = 40, height = 40, shrink = false, align = "center", justify = "center", class = "mail-tool",
-		state = if disabled then "disabled" elseif on then "on" else nil,
-		tooltip = tip, msg = if disabled then nil else msg, to = if disabled then nil else to,
-		ui.icon { name = icon, size = "headline" },
+local function mail_app_rows(messages, selected_id, key, threaded)
+	local items = messages or {}
+	if #items == 0 then
+		return ui.column { grow = true, padding = "large", justify = "center", align = "center",
+			ui.text { "No messages", tone = "muted" },
+		}
+	end
+	return ui.list {
+		id = "mail-cards-" .. key,
+		count = #items, row_height = 50, grow = true,
+		row = function(i)
+			local mail = items[i]
+			if mail.thread_pager then
+				return ui.row { height = 50, shrink = false, gap = "normal", align = "center", class = "mail-card-row",
+					ui.text { "Replies", tone = "muted" },
+					ui.row { msg = { action = "thread_first", id = mail.id, cursor = mail.thread_cursor }, to = "provider:mail", ui.text { "First", tone = "accent" } },
+					if mail.thread_more then ui.row { msg = { action = "thread_next", id = mail.id, cursor = mail.thread_cursor }, to = "provider:mail", ui.text { "Next 100", tone = "accent" } } else ui.text { "End of thread", tone = "muted" },
+				}
+			end
+			local subject = mail.subject or ""
+			if threaded and (mail.thread_count or 1) > 1 then subject ..= "  (" .. tostring(mail.thread_count) .. ")" end
+			local date = string.sub(mail.date_label or "", 6, 16)
+			return ui.column { height = 50, shrink = false, justify = "center", class = "mail-card-row", selected = selected_id == mail.id,
+				msg = { action = "select", id = mail.id },
+				ui.row { align = "center", shrink = false, style = { gap = 6 },
+					if mail.unread then ui.row { width = 7, height = 7, shrink = false, style = { background = "accent", radius = 999 } } else ui.row { width = 7, shrink = false },
+					ui.column { grow = true, ui.text { mail.sender or "", truncate = true, style = { font_size = 13, weight = if mail.unread then "bold" else "semibold" } } },
+					if mail.starred then ui.icon { name = "flag", style = { font_size = 11, color = "#f59e0b" } } else nil,
+					ui.text { date, style = { font_size = 11, color = "muted-foreground" } },
+				},
+				ui.row { align = "center", shrink = false, style = { gap = 6, padding = { 0, 0, 0, 13 } },
+					ui.column { grow = true, ui.text { subject, truncate = true, style = { font_size = 12, color = if mail.unread then "foreground" else "muted-foreground" } } },
+				},
+			}
+		end,
 	}
 end
 
-local function mailbox_row(label, icon, count, selected, msg)
-	return ui.row { height = 26, shrink = false, align = "center", class = "mailbox-row", selected = selected, msg = msg,
-		ui.icon { name = icon, size = "small", tone = "accent" },
+local function flat_tool(icon, tip, msg, to, disabled, on, color)
+	return ui.row { width = 30, height = 28, shrink = false, align = "center", justify = "center", class = "mail-tool-flat",
+		state = if disabled then "disabled" elseif on then "on" else nil,
+		tooltip = tip, msg = if disabled then nil else msg, to = if disabled then nil else to,
+		ui.icon { name = icon, style = { font_size = 15, color = if on then "accent" else color } },
+	}
+end
+
+local function tool_divider()
+	return ui.row { width = 1, height = 16, shrink = false, class = "mail-tool-divider" }
+end
+
+local function capsule_btn(icon, tip, msg, to, disabled, on, color)
+	return ui.row { width = 32, height = 30, shrink = false, align = "center", justify = "center", class = "mail-capsule-btn",
+		state = if disabled then "disabled" elseif on then "on" else nil,
+		tooltip = tip, msg = if disabled then nil else msg, to = if disabled then nil else to,
+		ui.icon { name = icon, style = { font_size = 15, color = if on then "accent" else color } },
+	}
+end
+
+local function capsule_sep()
+	return ui.row { width = 1, height = 14, shrink = false, class = "mail-capsule-sep" }
+end
+
+local function capsule(...)
+	return ui.row { height = 32, shrink = false, align = "center", class = "mail-capsule", ... }
+end
+
+local function circle_btn(icon, tip, msg, to, disabled, on)
+	return ui.row { width = 32, height = 32, shrink = false, align = "center", justify = "center", class = "mail-circle-btn",
+		state = if disabled then "disabled" elseif on then "on" else nil,
+		tooltip = tip, msg = if disabled then nil else msg, to = if disabled then nil else to,
+		ui.icon { name = icon, style = { font_size = 15, color = if on then "accent" else nil } },
+	}
+end
+
+local function sq_btn(icon, tip, msg, to, disabled, on, color)
+	return ui.row { width = 28, height = 26, shrink = false, align = "center", justify = "center", class = "mail-sq-btn",
+		state = if disabled then "disabled" elseif on then "on" else nil,
+		tooltip = tip, msg = if disabled then nil else msg, to = if disabled then nil else to,
+		ui.icon { name = icon, style = { font_size = 14, color = if on then "accent" else color } },
+	}
+end
+
+local function sq_group(...)
+	return ui.row { height = 30, shrink = false, align = "center", class = "mail-sq-group", ... }
+end
+
+local function rail_btn(icon, tip, selected, msg)
+	return ui.row { width = 32, height = 32, shrink = false, align = "center", justify = "center", class = "rail-btn",
+		selected = selected, tooltip = tip, msg = msg,
+		ui.icon { name = icon, style = { font_size = 16 } },
+	}
+end
+
+local function search_field(class_name, width, height, placeholder, state)
+	return ui.row { width = width, height = height, shrink = false, align = "center", class = class_name,
+		ui.icon { name = "search", style = { font_size = 13, color = "muted-foreground" } },
+		ui.input { id = "search", class = "mail-search-input", grow = true, value = state.query, placeholder = placeholder, change = "query", submit = { action = "search" }, focus = state.focus },
+	}
+end
+
+local folder_icons = { INBOX = "inbox", Inbox = "inbox", Sent = "send", ["Sent Mail"] = "send", Archive = "archive", Drafts = "file-text", Junk = "ban", Spam = "ban", Trash = "trash-2" }
+local folder_colors = { INBOX = "accent", Inbox = "accent", Sent = "accent", ["Sent Mail"] = "accent", Archive = "muted-foreground", Drafts = "muted-foreground", Junk = "muted-foreground", Spam = "muted-foreground", Trash = "muted-foreground" }
+local folder_badges = { INBOX = "#3478f6", Inbox = "#3478f6", Sent = "#3894ef", ["Sent Mail"] = "#3894ef", Archive = "#8b929b", Drafts = "#8b929b", Junk = "#8b929b", Spam = "#8b929b", Trash = "#8b929b" }
+
+local function mailbox_row(layout, label, icon, icon_color, badge_bg, count, selected, msg)
+	local row_height = if layout == "moonmail" then 32 elseif layout == "mail" then 30 else 28
+	local row_class = if layout == "moonmail" then "mailbox-row-moonmail" elseif layout == "mail" then "mailbox-row-mail" else "mailbox-row"
+	local glyph
+	if layout == "moonmail" and badge_bg then
+		glyph = ui.row { width = 20, height = 20, shrink = false, align = "center", justify = "center", style = { background = badge_bg, radius = 5 },
+			ui.icon { name = icon, style = { font_size = 12, color = "#ffffff" } },
+		}
+	elseif layout == "moonmail" then
+		glyph = ui.row { width = 20, height = 20, shrink = false, align = "center", justify = "center",
+			ui.icon { name = icon, style = { font_size = 15, color = icon_color or "muted-foreground" } },
+		}
+	else
+		glyph = ui.icon { name = icon, style = { font_size = if layout == "mail" then 15 else 14, color = icon_color or "accent" } }
+	end
+	return ui.row { height = row_height, shrink = false, align = "center", class = row_class, selected = selected, msg = msg,
+		glyph,
 		ui.column { grow = true, ui.text { label, truncate = true } },
 		if count and count > 0 then ui.text { tostring(count), class = "mailbox-count" } else nil,
 	}
 end
 
-local folder_icons = { INBOX = "inbox", Inbox = "inbox", Sent = "send", ["Sent Mail"] = "send", Archive = "archive", Drafts = "file-text", Junk = "ban", Spam = "ban", Trash = "trash-2" }
-
-local function folder_nodes(children, nodes, state, mail, depth)
+local function folder_nodes(layout, children, nodes, state, mail, depth, use_badges)
+	local row_height = if layout == "moonmail" then 32 elseif layout == "mail" then 30 else 28
+	local row_class = if layout == "moonmail" then "mailbox-row-moonmail" elseif layout == "mail" then "mailbox-row-mail" else "mailbox-row"
 	for _, node in nodes do
 		local branch = #(node.children or {}) > 0
 		local closed = state.closed[node.key] == true
-		table.insert(children, ui.row { height = 26, shrink = false, align = "center", gap = "none", class = "mailbox-row", selected = node.id ~= nil and mail.mailbox == node.id and state.pane == "mail",
+		local icon = node.icon or folder_icons[node.name] or "folder"
+		local icon_color = if node.icon == "at-sign" then "muted-foreground" else (folder_colors[node.name] or "muted-foreground")
+		local badge_bg = if use_badges and depth == 0 then folder_badges[node.name] else nil
+		local glyph
+		if layout == "moonmail" and badge_bg then
+			glyph = ui.row { width = 20, height = 20, shrink = false, align = "center", justify = "center", style = { background = badge_bg, radius = 5 },
+				ui.icon { name = icon, style = { font_size = 12, color = "#ffffff" } },
+			}
+		else
+			glyph = ui.row { width = 20, height = 20, shrink = false, align = "center", justify = "center",
+				ui.icon { name = icon, style = { font_size = if layout == "mailmate" then 14 else 15, color = icon_color } },
+			}
+		end
+		table.insert(children, ui.row { height = row_height, shrink = false, align = "center", gap = "none", class = row_class, selected = node.id ~= nil and mail.mailbox == node.id and state.pane == "mail",
 			msg = if node.id then { action = "folder", id = node.id } elseif branch then { folder_toggle = node.key } else nil,
-			ui.row { width = depth * 14 + 14, shrink = false, justify = "end", align = "center",
-				if branch then ui.row { width = 14, height = 26, align = "center", msg = { folder_toggle = node.key }, ui.icon { name = if closed then "chevron-right" else "chevron-down", size = "small" } } else nil,
-			},
-			ui.row { width = 22, shrink = false, align = "center", ui.icon { name = node.icon or folder_icons[node.name] or "folder", size = "small", tone = "accent" } },
+			if depth > 0 or branch then ui.row { width = depth * 14 + 14, shrink = false, justify = "end", align = "center",
+				if branch then ui.row { width = 14, height = row_height, align = "center", msg = { folder_toggle = node.key }, ui.icon { name = if closed then "chevron-right" else "chevron-down", style = { font_size = 11, color = "muted-foreground" } } } else nil,
+			} else nil,
+			ui.row { width = 28, shrink = false, align = "center", glyph },
 			ui.column { grow = true, ui.text { if node.name == "INBOX" then "Inbox" else node.name, truncate = true } },
 			if node.unread and node.unread > 0 then ui.text { tostring(node.unread), class = "mailbox-count" } else nil,
 		})
-		if branch and not closed then folder_nodes(children, node.children, state, mail, depth + 1) end
+		if branch and not closed then folder_nodes(layout, children, node.children, state, mail, depth + 1, false) end
 	end
 end
 
@@ -218,15 +341,26 @@ return mod {
 			{ label = "Mark entire thread read", msg = { action = "thread_read" }, to = "provider:mail" },
 			{ label = "Mark entire thread unread", msg = { action = "thread_unread" }, to = "provider:mail" },
 		} },
+		{ title = "View", items = {
+			{ label = "MailMate Layout", msg = { action = "layout", value = "mailmate" }, to = "provider:mail", shortcut = "secondary-1" },
+			{ label = "Mail.app Layout", msg = { action = "layout", value = "mail" }, to = "provider:mail", shortcut = "secondary-2" },
+			{ label = "Moonmail Layout", msg = { action = "layout", value = "moonmail" }, to = "provider:mail", shortcut = "secondary-3" },
+			"-",
+			{ label = "Toggle Sidebar", msg = "toggle-sidebar", shortcut = "secondary-alt-s" },
+		} },
 	},
-	init = function(previous) return { query = "", email = "", pane = "mail", rich = false, thread = false, focus = false, closed = if previous then previous.closed or {} else {}, related_sort = "date", related_ascending = false } end,
+	init = function(previous) return { query = "", email = "", pane = "mail", rich = false, thread = false, focus = false, sidebar_hidden = false, closed = if previous then previous.closed or {} else {}, related_sort = "date", related_ascending = false } end,
 	update = function(state, msg)
 		if msg == "compose" or msg == "reply" or msg == "reply_all" or msg == "forward" or msg == "forward_text" then
 			return state, { { to = "provider:mail", msg = { action = msg } } }
 		elseif msg == "settings" then return state, { { to = "settings", msg = "open" } }
+		elseif msg == "toggle-sidebar" then state.sidebar_hidden = not state.sidebar_hidden
 		elseif msg == "mail" or msg == "outbox" or msg == "organize" or msg == "operations" or msg == "drafts" or msg == "links" or msg == "identities" or msg == "searches" or msg == "folders" then
 			state.pane = msg
 			return state, { { to = "provider:mail", msg = { action = "partition_close" } } }
+		elseif msg == "people" then
+			state.pane = msg
+			return state, { { to = "provider:mail", msg = { action = "partition_close" } }, { to = "provider:mail", msg = { action = "people" } } }
 		elseif msg == "rich" then state.rich = not state.rich
 		elseif msg == "focus-search" then state.focus = not state.focus
 		elseif msg == "mailbox-chooser" or msg == "move-chooser" or msg == "copy-chooser" then
@@ -282,6 +416,7 @@ return mod {
 				if msg.action == "attachments" then state.pane = "attachments" end
 				if msg.action == "draft_discard" then state.pane = "drafts" end
 				if msg.action == "folder" then state.query = "" end
+				if msg.action == "search" and msg.person then state.query = msg.value end
 				if msg.action == "folder" or msg.action == "filter" or msg.action == "select" or msg.action == "related" or msg.action == "search" then state.pane = "mail" end
 				return state, { { to = "provider:mail", msg = msg } }
 			elseif msg.msg == "query" then state.query = msg.value
@@ -301,9 +436,11 @@ return mod {
 		for _, saved in mail.saved_searches or {} do
 			if saved.id == mail.active_saved_search then title = saved.name .. (if mail.partition_value then " · " .. mail.partition_value else "") end
 		end
+		local layout = (mail.preferences or {}).layout or "mail"
+		local label_class = if layout == "mailmate" then "sidebar-label" else "sidebar-label-mail"
 		local sidebar = {
-			ui.text { "Mailboxes", class = "sidebar-label" },
-			mailbox_row("All Messages", "mails", total_unread, not mail.mailbox and state.pane == "mail" and mail.filter == "all", { action = "folder", id = 0 }),
+			ui.text { if layout == "mail" then "Favorites" else "Mailboxes", class = label_class },
+			mailbox_row(layout, "All Messages", "mails", "accent", "#5856d6", total_unread, not mail.mailbox and state.pane == "mail" and mail.filter == "all", { action = "folder", id = 0 }),
 		}
 		for _, name in { "INBOX", "Archive", "Sent", "Junk", "Trash" } do
 			local children = {}
@@ -315,22 +452,25 @@ return mod {
 				end
 			end
 			if #children > 0 then
-				folder_nodes(sidebar, { { key = "role:" .. name, name = name, id = if #children == 1 then children[1].id else nil, unread = unread, children = children } }, state, mail, 0)
+				folder_nodes(layout, sidebar, { { key = "role:" .. name, name = name, id = if #children == 1 then children[1].id else nil, unread = unread, children = children } }, state, mail, 0, layout == "moonmail")
 			end
 		end
-		table.insert(sidebar, mailbox_row("Drafts", "file-text", mail.draft_count or 0, state.pane == "drafts", "drafts"))
-		table.insert(sidebar, mailbox_row("Outbox", "send", mail.outbox_count or 0, state.pane == "outbox", "outbox"))
-		table.insert(sidebar, mailbox_row("Saved searches", "search", #(mail.saved_searches or {}), state.pane == "searches", "searches"))
-		table.insert(sidebar, mailbox_row("Mail operations", "list-checks", mail.unresolved_operations or 0, state.pane == "operations", "operations"))
-		table.insert(sidebar, mailbox_row("Move & folders", "folder-open", nil, state.pane == "organize", "organize"))
-		table.insert(sidebar, ui.text { "Views", class = "sidebar-label" })
-		table.insert(sidebar, mailbox_row("Unread", "mail", nil, mail.filter == "unread", { action = "filter", value = "unread" }))
-		table.insert(sidebar, mailbox_row("Flagged", "flag", nil, mail.filter == "starred", { action = "filter", value = "starred" }))
-		table.insert(sidebar, ui.text { "Sources", class = "sidebar-label" })
+		table.insert(sidebar, mailbox_row(layout, "Drafts", "file-text", "muted-foreground", "#8b929b", mail.draft_count or 0, state.pane == "drafts", "drafts"))
+		table.insert(sidebar, mailbox_row(layout, "Outbox", "upload", "muted-foreground", "#8b929b", mail.outbox_count or 0, state.pane == "outbox", "outbox"))
+		if layout == "moonmail" then
+			table.insert(sidebar, mailbox_row(layout, "People", "users", "muted-foreground", "#8b5cf6", nil, state.pane == "people", "people"))
+		end
+		table.insert(sidebar, ui.text { "Views", class = label_class })
+		table.insert(sidebar, mailbox_row(layout, "Unread", "mail", "accent", nil, nil, mail.filter == "unread", { action = "filter", value = "unread" }))
+		table.insert(sidebar, mailbox_row(layout, "Flagged", "flag", "#f59e0b", "#f28b35", nil, mail.filter == "starred", { action = "filter", value = "starred" }))
+		table.insert(sidebar, mailbox_row(layout, "Saved Searches", "search", "muted-foreground", nil, #(mail.saved_searches or {}), state.pane == "searches", "searches"))
+		table.insert(sidebar, mailbox_row(layout, "Mail Operations", "list-checks", "muted-foreground", nil, mail.unresolved_operations or 0, state.pane == "operations", "operations"))
+		table.insert(sidebar, mailbox_row(layout, "Move & Folders", "folder-open", "muted-foreground", nil, nil, state.pane == "organize", "organize"))
+		table.insert(sidebar, ui.text { if layout == "mailmate" then "Sources" else "Accounts", class = label_class })
 		local sources = table.clone(mail.folder_tree or {})
 		for _, source in sources do source.icon = "at-sign" end
-		folder_nodes(sidebar, sources, state, mail, 0)
-		if #sources == 0 then table.insert(sidebar, mailbox_row("Connect an account…", "at-sign", nil, state.pane == "settings", "settings")) end
+		folder_nodes(layout, sidebar, sources, state, mail, 0, false)
+		if #sources == 0 then table.insert(sidebar, mailbox_row(layout, "Connect an account…", "at-sign", "muted-foreground", nil, nil, state.pane == "settings", "settings")) end
 		local related = table.clone((mail.related or {}).rows or {})
 		if mail.related and mail.related.anchor then table.insert(related, 1, mail.related.anchor) end
 		local reader
@@ -474,6 +614,26 @@ return mod {
 				} else ui.column { grow = true, padding = "large", align = "center", justify = "center", ui.text { "No drafts on this page", tone = "muted" } },
 				ui.row { class = "mail-table-footer", height = 30, shrink = false, align = "center", ui.text { "Newest edits first · click a draft to continue writing", size = "small", tone = "muted" }, ui.spacer {}, action("First", "drafts_first"), ui.button { label = "Next", small = true, disabled = not page.next, msg = { action = "drafts_next" }, to = "provider:mail" } },
 			}
+		elseif state.pane == "people" then
+			local people = mail.people or {}
+			reader = ui.column { grow = true, gap = "none",
+				ui.row { class = "drafts-heading", height = 48, shrink = false, align = "center",
+					ui.text { "People", class = "title" }, ui.text { tostring(#people) .. " you write to most", tone = "muted", size = "small" }, ui.row { grow = true },
+					ui.button { label = "Refresh", icon = "refresh-cw", small = true, msg = { action = "people" }, to = "provider:mail" },
+				},
+				ui.row { height = 25, shrink = false, gap = "none", class = "mail-table-heading", cell("Name", 220, true), cell("Address", nil, true), cell("Sent", 70, true), cell("Received", 80, true), cell("Total ↓", 80, true, nil, true) },
+				if #people > 0 then ui.list { id = "people-list", count = #people, row_height = ROW, grow = true,
+					row = function(i)
+						local person = people[i]
+						local query = "sender-address:" .. person.address .. " OR recipient-address:" .. person.address
+						return ui.row { height = ROW, shrink = false, align = "center", gap = "none", class = if i % 2 == 0 then "mail-table-row mail-table-row-even" else "mail-table-row",
+							tooltip = "Show all mail with " .. person.name, msg = { action = "search", value = query, person = true },
+							cell(person.name, 220, false), cell(person.address, nil, false, "muted"), cell(tostring(person.sent), 70, false), cell(tostring(person.received), 80, false), cell(tostring(person.sent + person.received), 80, false),
+						}
+					end,
+				} else ui.column { grow = true, padding = "large", align = "center", justify = "center", ui.text { "No one yet: people appear once you have written to them and they have written back", tone = "muted" } },
+				ui.row { class = "mail-table-footer", height = 30, shrink = false, align = "center", ui.text { "Ranked by messages exchanged both ways · Junk and Trash ignored · click a person to see your mail with them", size = "small", tone = "muted" } },
+			}
 		elseif state.pane == "searches" then
 			local items = { ui.text { "Saved searches", class = "title" },
 				ui.text { "Search fields: subject:, body:, from:, to:, cc:, account:, in:, keyword:, tag:, sender-address:, recipient-address:, is:unread/read/starred, after:YYYY-MM-DD, before:YYYY-MM-DD.", tone = "muted" },
@@ -520,90 +680,256 @@ return mod {
 				ui.column { grow = true, ui.browser { id = "message-reader", url = if state.rich and mail.html_url ~= "" then mail.html_url else mail.plain_url } },
 			} else ui.column { class = "form", ui.text { "No message selected", tone = "muted" } }
 		end
-		return ui.column { grow = true, gap = "none",
-			ui.row { class = "toolbar", height = 54, shrink = false, align = "center", drag = true,
-				ui.row { width = 90, shrink = false },
-				tool("chevron-up", "Previous message · ⌘↑", { action = "move", value = "up" }, "provider:mail"),
-				tool("chevron-down", "Next message · ⌘↓", { action = "move", value = "down" }, "provider:mail"),
-				tool("square-pen", "Compose · ⌘N", "compose"),
-				tool("reply", "Reply", "reply", nil, not selected),
-				ui.button { label = "Reply All", icon = "reply", small = true, msg = "reply_all", disabled = not selected },
-				ui.button { label = "Forward", small = true, msg = "forward", disabled = not selected },
-				tool("flag", "Toggle flag", { action = "star" }, "provider:mail", not selected or mail.selected_moving),
-				tool("mail", "Mark unread", { action = "unread" }, "provider:mail", not selected or mail.selected_moving),
-				tool("archive", "Archive selected or checked messages", { action = "archive_messages" }, "provider:mail", not selected and (mail.checked_count or 0) == 0),
-				tool("trash-2", "Move selected or checked messages to Trash", { action = "trash_messages" }, "provider:mail", not selected and (mail.checked_count or 0) == 0),
-				tool("folder-open", "Move to folder / configure folder roles", "organize"),
-				tool("refresh-cw", "Sync · ⌘R", { action = "sync" }, "provider:mail", mail.busy or mail.demo),
-				if mail.syncing then action("Stop Sync", "cancel_sync") else nil,
-				ui.button { label = title, small = true, variant = "ghost", msg = "mail" },
-				ui.spacer {},
-				tool("list-tree", if mail.threaded then "Show individual messages" else "Group messages into expandable threads", { action = "threaded" }, "provider:mail", false, mail.threaded),
-				if mail.demo then ui.text { "Demo", class = "muted" } else nil,
-				ui.input { id = "search", value = state.query, width = 270, placeholder = "Search messages · Enter", change = "query", submit = { action = "search" }, focus = state.focus },
-				tool("search", "Search", { action = "search", value = state.query }),
-				tool("settings", "Appearance, account & storage", "settings"),
-				ui.mount "feedback",
+		local no_action = not selected or mail.selected_moving
+		local no_bulk = not selected and (mail.checked_count or 0) == 0
+		local count_summary = tostring(mail.page_count or 0) .. (if mail.threaded then " threads" else " messages") .. (if total_unread > 0 then " · " .. tostring(total_unread) .. " unread" else "")
+		local message_list_pane = ui.column { grow = true, gap = "none",
+			table_header(false, state, mail),
+			rows(mail.rows, mail.anchor, false, mail.list_key or "initial", mail.threaded, columns(mail, false)),
+			ui.row { height = 26, class = "mail-table-footer", shrink = false, align = "center",
+				ui.text { tostring(mail.page_count or 0) .. (if mail.threaded then " threads" else " messages") .. " shown", class = "muted" },
+				ui.spacer {}, action("First", "first"),
+				ui.button { label = "Previous", small = true, disabled = not mail.previous, msg = { action = "previous" }, to = "provider:mail" },
+				ui.button { label = "Next", small = true, disabled = not mail.more, msg = { action = "next" }, to = "provider:mail" },
 			},
+		}
+		local correspondence_pane = ui.column { grow = true, gap = "none",
+			ui.row { height = 27, class = "correspondence-title", shrink = false, align = "center",
+				ui.text { if mail.related_thread then "Reply Thread" else "Correspondence", weight = "medium" },
+				ui.spacer {}, ui.text { tostring(#related) .. " · anchor pinned", class = "muted" },
+				ui.button { icon = "list", small = true, variant = "ghost", tooltip = if mail.related_thread then "Show Correspondence" else "Show reply thread", msg = { action = "related_mode", anchor = mail.anchor }, to = "provider:mail" },
+			},
+			table_header(true, state, mail),
+			rows(related, selected and selected.summary.id, true, (mail.related_key or "") .. (if mail.related_thread then "-thread" else "-pairs"), false, columns(mail, true)),
+			ui.row { height = 26, shrink = false, action("First", "related_first", { anchor = mail.anchor }), ui.button { label = "Next", small = true, disabled = not mail.related or not mail.related.next, msg = { action = "related_next", anchor = mail.anchor }, to = "provider:mail" } },
+		}
+		local mail_app_list_pane = ui.column { grow = true, gap = "none",
+			mail_app_rows(mail.rows, mail.anchor, mail.list_key or "initial", mail.threaded),
+			ui.row { height = 26, class = "mail-table-footer", shrink = false, align = "center",
+				ui.text { tostring(mail.page_count or 0) .. (if mail.threaded then " threads" else " messages") .. " shown", class = "muted" },
+				ui.spacer {}, action("First", "first"),
+				ui.button { label = "Previous", small = true, disabled = not mail.previous, msg = { action = "previous" }, to = "provider:mail" },
+				ui.button { label = "Next", small = true, disabled = not mail.more, msg = { action = "next" }, to = "provider:mail" },
+			},
+		}
+		-- Panes own one inset border each. Split handles still resize, but
+		-- their overlay hairlines would double borders and disappear behind WebKit.
+		local mail_body
+		if state.pane ~= "mail" then
+			mail_body = reader
+		elseif layout == "mail" then
+			mail_body = ui.hsplit { id = "mail-app-columns-v1", divider = false,
+				ui.pane { size = 390, min = 280, max = 640, fixed = true, class = "mail-pane-right",
+					ui.vsplit { id = "mail-app-list-and-correspondence", divider = false,
+						ui.pane { size = 500, min = 200, fixed = true, class = "mail-pane-bottom", mail_app_list_pane },
+						ui.pane { min = 180, correspondence_pane },
+					},
+				},
+				ui.pane { min = 360, reader },
+			}
+		else
+			mail_body = ui.vsplit { id = "message-table-and-preview", divider = false,
+				ui.pane { size = 380, min = 160, fixed = true, class = "mail-pane-bottom", message_list_pane },
+				ui.pane { min = 220,
+					ui.hsplit { id = "correspondence-and-reader", divider = false,
+						ui.pane { size = 390, min = 260, max = 650, fixed = true, class = "mail-pane-right", correspondence_pane },
+						ui.pane { min = 320, reader },
+					},
+				},
+			}
+		end
+		local alerts = ui.column { gap = "none", shrink = false,
 			if mail.error and mail.error ~= "" then ui.text { mail.error, class = "error" } else nil,
 			if (mail.checked_count or 0) > 0 then ui.row { height = 30, shrink = false, padding = "small", align = "center",
 				ui.text { tostring(mail.checked_count) .. " message(s) checked · thread rows select only their representative", tone = "accent" },
 				ui.spacer {}, action("Clear selection", "clear_selection"),
 			} else nil,
-			-- Panes own one inset border each. Split handles still resize, but
-			-- their overlay hairlines would double borders and disappear behind WebKit.
-			ui.row { grow = true, gap = "none",
-				activity_bar {
-					selected = state.pane,
-					items = {
-						{ id = "mail", icon = "mails", tooltip = "Mail", count = total_unread, msg = "mail" },
-						{ id = "drafts", icon = "file-text", tooltip = "Drafts", count = mail.draft_count or 0, msg = "drafts" },
-						{ id = "outbox", icon = "send", tooltip = "Outbox", count = mail.outbox_count or 0, msg = "outbox" },
-						{ id = "searches", icon = "search", tooltip = "Saved searches", msg = "searches" },
-						{ id = "operations", icon = "list-checks", tooltip = "Mail operations", count = mail.unresolved_operations or 0, msg = "operations" },
+		}
+		local status_bar = ui.row { class = "status", height = 22, shrink = false, align = "center", ui.text { mail.status or "Opening local archive…" }, ui.spacer {}, ui.text { "⌘N Compose   ⌘R Sync   ⌘1/2/3 Layout" } }
+
+		if layout == "mailmate" then
+			return ui.column { grow = true, gap = "none",
+				ui.row { class = "toolbar-mailmate", height = 46, shrink = false, align = "center", drag = true,
+					ui.row { width = 76, shrink = false },
+					flat_tool("panel-left", "Toggle sidebar · ⌥⌘S", "toggle-sidebar", nil, false, not state.sidebar_hidden, "muted-foreground"),
+					flat_tool("chevron-up", "Previous message · ⌘↑", { action = "move", value = "up" }, "provider:mail", false, false, "muted-foreground"),
+					flat_tool("chevron-down", "Next message · ⌘↓", { action = "move", value = "down" }, "provider:mail", false, false, "muted-foreground"),
+					tool_divider(),
+					flat_tool("square-pen", "Compose · ⌘N", "compose"),
+					tool_divider(),
+					flat_tool("reply", "Reply", "reply", nil, not selected),
+					flat_tool("app-reply-all", "Reply All", "reply_all", nil, not selected),
+					flat_tool("app-forward", "Forward · ⇧⌘F", "forward", nil, not selected),
+					tool_divider(),
+					flat_tool("archive", "Archive selected or checked messages", { action = "archive_messages" }, "provider:mail", no_bulk),
+					flat_tool("trash-2", "Move selected or checked messages to Trash", { action = "trash_messages" }, "provider:mail", no_bulk),
+					flat_tool("folder-open", "Move to folder / configure folder roles", "organize"),
+					tool_divider(),
+					flat_tool("flag", "Toggle flag", { action = "star" }, "provider:mail", no_action, false, "#f59e0b"),
+					flat_tool("mail-open", "Mark unread", { action = "unread" }, "provider:mail", no_action),
+					ui.spacer {},
+					ui.row { align = "center", shrink = false, style = { gap = 6 }, msg = "mail",
+						ui.text { title, style = { font_size = 13, weight = "semibold" } },
+						ui.text { "· " .. tostring(mail.page_count or 0), style = { font_size = 12, color = "muted-foreground" } },
+						if mail.demo then ui.text { "Demo", class = "muted" } else nil,
 					},
-					bottom = { { id = "settings", icon = "settings", tooltip = "Settings", msg = "settings" } },
+					ui.spacer {},
+					if mail.syncing then action("Stop Sync", "cancel_sync") else nil,
+					flat_tool("list-tree", if mail.threaded then "Show individual messages" else "Group messages into expandable threads", { action = "threaded" }, "provider:mail", false, mail.threaded),
+					flat_tool("refresh-cw", "Sync · ⌘R", { action = "sync" }, "provider:mail", mail.busy or mail.demo, false, "muted-foreground"),
+					search_field("mail-search-box", 210, 28, "Search messages", state),
+					ui.mount "feedback",
 				},
-				ui.hsplit { id = "mailmate-layout-v1", divider = false,
-					ui.pane { size = 220, min = 170, max = 340, fixed = true, class = "sidebar mail-pane-right",
-						ui.column { grow = true, scroll = true, gap = "none", table.unpack(sidebar) },
+				alerts,
+				ui.row { grow = true, gap = "none",
+					ui.column { width = 44, shrink = false, align = "center", class = "rail-compact",
+						rail_btn("mails", "Mail", state.pane == "mail" or state.pane == "drafts" or state.pane == "outbox" or state.pane == "searches" or state.pane == "organize", "mail"),
+						rail_btn("users", "People you write to most", state.pane == "people", "people"),
+						rail_btn("list-checks", "Mail operations", state.pane == "operations", "operations"),
+						ui.spacer {},
+						rail_btn("settings", "Settings · ⌘,", state.pane == "settings", "settings"),
 					},
-					ui.pane { min = 600,
-						if state.pane ~= "mail" then reader else ui.vsplit { id = "message-table-and-preview", divider = false,
-							ui.pane { size = 380, min = 160, fixed = true, class = "mail-pane-bottom",
-								ui.column { grow = true, gap = "none",
-									table_header(false, state, mail),
-									rows(mail.rows, mail.anchor, false, mail.list_key or "initial", mail.threaded, columns(mail, false)),
-									ui.row { height = 26, class = "mail-table-footer", shrink = false, align = "center",
-										ui.text { tostring(mail.page_count or 0) .. (if mail.threaded then " threads" else " messages") .. " shown", class = "muted" },
-										ui.spacer {}, action("First", "first"),
-										ui.button { label = "Previous", small = true, disabled = not mail.previous, msg = { action = "previous" }, to = "provider:mail" },
-										ui.button { label = "Next", small = true, disabled = not mail.more, msg = { action = "next" }, to = "provider:mail" },
-									},
-								},
+					ui.hsplit { id = "mailmate-layout-v1", divider = false,
+						ui.pane { size = 220, min = 170, max = 340, fixed = true, visible = not state.sidebar_hidden, class = "sidebar mail-pane-right",
+							ui.column { grow = true, scroll = true, gap = "none", table.unpack(sidebar) },
+						},
+						ui.pane { min = 600, mail_body },
+					},
+				},
+				status_bar,
+			}
+		elseif layout == "moonmail" then
+			return ui.column { grow = true, gap = "none",
+				ui.hsplit { id = "moonmail-layout-v1", divider = false,
+					ui.pane { size = 232, min = 190, max = 340, fixed = true, visible = not state.sidebar_hidden, class = "sidebar-moonmail mail-pane-right",
+						ui.column { grow = true, gap = "none",
+							ui.row { height = 48, shrink = false, align = "center", drag = true, style = { padding = { 0, 2, 0, 74 } },
+								ui.spacer {},
+								sq_btn("panel-left", "Toggle sidebar · ⌥⌘S", "toggle-sidebar", nil, false, false, "muted-foreground"),
 							},
-							ui.pane { min = 220,
-								ui.hsplit { id = "correspondence-and-reader", divider = false,
-									ui.pane { size = 390, min = 260, max = 650, fixed = true, class = "mail-pane-right",
-										ui.column { grow = true, gap = "none",
-											ui.row { height = 27, class = "correspondence-title", shrink = false, align = "center",
-												ui.text { if mail.related_thread then "Reply Thread" else "Correspondence", weight = "medium" },
-												ui.spacer {}, ui.text { tostring(#related) .. " · anchor pinned", class = "muted" },
-												ui.button { icon = "list", small = true, variant = "ghost", tooltip = if mail.related_thread then "Show Correspondence" else "Show reply thread", msg = { action = "related_mode", anchor = mail.anchor }, to = "provider:mail" },
-											},
-											table_header(true, state, mail),
-											rows(related, selected and selected.summary.id, true, (mail.related_key or "") .. (if mail.related_thread then "-thread" else "-pairs"), false, columns(mail, true)),
-											ui.row { height = 26, shrink = false, action("First", "related_first", { anchor = mail.anchor }), ui.button { label = "Next", small = true, disabled = not mail.related or not mail.related.next, msg = { action = "related_next", anchor = mail.anchor }, to = "provider:mail" } },
-										},
-									},
-									ui.pane { min = 320, reader },
-								},
+							ui.column { grow = true, scroll = true, style = { gap = 4 }, table.unpack(sidebar) },
+							ui.row { height = 34, shrink = false, align = "center", class = "sidebar-footer", msg = "settings", tooltip = "Settings · ⌘,",
+								ui.icon { name = "settings", style = { font_size = 15, color = "muted-foreground" } },
+								ui.text { "Settings", style = { font_size = 13, color = "muted-foreground" } },
 							},
 						},
 					},
+					ui.pane { min = 600,
+						ui.column { grow = true, gap = "none",
+							ui.row { class = "toolbar-moonmail", height = 52, shrink = false, align = "center", drag = true,
+								if state.sidebar_hidden then ui.row { width = 72, shrink = false } else nil,
+								if state.sidebar_hidden then sq_btn("panel-left", "Show sidebar · ⌥⌘S", "toggle-sidebar", nil, false, false, "muted-foreground") else nil,
+								ui.row { shrink = false, align = "center", msg = "mail", ui.text { title, style = { font_size = 15, weight = "bold" } } },
+								if total_unread > 0 then ui.text { tostring(total_unread) .. " unread", class = "mailbox-pill-badge" } else nil,
+								if mail.demo then ui.text { "Demo", class = "muted" } else nil,
+								ui.spacer {},
+								if mail.syncing then action("Stop Sync", "cancel_sync") else nil,
+								ui.row { height = 30, shrink = false, align = "center", class = "mail-compose-accent", tooltip = "Compose · ⌘N", msg = "compose",
+									ui.icon { name = "square-pen", style = { font_size = 14, color = "#ffffff" } },
+									ui.text { "Compose", style = { font_size = 12, weight = "semibold", color = "#ffffff" } },
+								},
+								sq_group(
+									sq_btn("reply", "Reply", "reply", nil, not selected),
+									sq_btn("app-reply-all", "Reply All", "reply_all", nil, not selected),
+									sq_btn("app-forward", "Forward · ⇧⌘F", "forward", nil, not selected)
+								),
+								sq_group(
+									sq_btn("archive", "Archive selected or checked messages", { action = "archive_messages" }, "provider:mail", no_bulk),
+									sq_btn("trash-2", "Move selected or checked messages to Trash", { action = "trash_messages" }, "provider:mail", no_bulk),
+									sq_btn("folder-open", "Move to folder / configure folder roles", "organize")
+								),
+								sq_group(
+									sq_btn("flag", "Toggle flag", { action = "star" }, "provider:mail", no_action, false, "#f59e0b"),
+									sq_btn("mail-open", "Mark unread", { action = "unread" }, "provider:mail", no_action),
+									sq_btn("list-tree", if mail.threaded then "Show individual messages" else "Group messages into expandable threads", { action = "threaded" }, "provider:mail", false, mail.threaded),
+									sq_btn("refresh-cw", "Sync · ⌘R", { action = "sync" }, "provider:mail", mail.busy or mail.demo)
+								),
+								search_field("mail-search-sq", 185, 30, "Search", state),
+								ui.mount "feedback",
+							},
+							alerts,
+							mail_body,
+						},
+					},
 				},
-			},
-			ui.row { class = "status", height = 22, shrink = false, align = "center", ui.text { mail.status or "Opening local archive…" }, ui.spacer {}, ui.text { "⌘N Compose   ⌘R Sync   ⌘↑/↓ Navigate" } },
-		}
+				status_bar,
+			}
+		else
+			-- Mail.app layout (Variant B with activity bar)
+			return ui.column { grow = true, gap = "none",
+				ui.hsplit { id = "mail-app-sidebar-v1", divider = false,
+					ui.pane { size = 272, min = 220, max = 380, fixed = true, visible = not state.sidebar_hidden, class = "mail-pane-right",
+						ui.column { grow = true, style = { background = "settings-sidebar" }, gap = "none",
+							ui.row { height = 52, shrink = false, align = "center", drag = true, class = "sidebar-mail-head",
+								ui.row { width = 76, shrink = false },
+								ui.spacer {},
+								circle_btn("panel-left", "Hide sidebar · ⌥⌘S", "toggle-sidebar"),
+							},
+							ui.row { grow = true, gap = "none",
+								activity_bar {
+									selected = state.pane,
+									items = {
+										{ id = "mail", icon = "mails", tooltip = "Mail", count = total_unread, msg = "mail" },
+										{ id = "drafts", icon = "file-text", tooltip = "Drafts", count = mail.draft_count or 0, msg = "drafts" },
+										{ id = "outbox", icon = "send", tooltip = "Outbox", count = mail.outbox_count or 0, msg = "outbox" },
+										{ id = "searches", icon = "search", tooltip = "Saved searches", msg = "searches" },
+										{ id = "operations", icon = "list-checks", tooltip = "Mail operations", count = mail.unresolved_operations or 0, msg = "operations" },
+									},
+									bottom = {
+										{ id = "people", icon = "users", tooltip = "People you write to most", msg = "people" },
+										{ id = "settings", icon = "settings", tooltip = "Settings", msg = "settings" },
+									},
+								},
+								ui.column { grow = true, scroll = true, class = "sidebar-mail", table.unpack(sidebar) },
+							},
+						},
+					},
+					ui.pane { min = 600,
+						ui.column { grow = true, gap = "none",
+							ui.row { class = "toolbar-mail", height = 52, shrink = false, align = "center", drag = true,
+								if state.sidebar_hidden then ui.row { width = 76, shrink = false } else nil,
+								if state.sidebar_hidden then circle_btn("panel-left", "Show sidebar · ⌥⌘S", "toggle-sidebar") else nil,
+								ui.column { gap = "none", shrink = false, msg = "mail",
+									ui.text { title, style = { font_size = 14, weight = "semibold" } },
+									ui.text { count_summary .. (if mail.demo then " · Demo" else ""), style = { font_size = 11, color = "muted-foreground" } },
+								},
+								ui.spacer {},
+								if mail.syncing then action("Stop Sync", "cancel_sync") else nil,
+								circle_btn("square-pen", "Compose · ⌘N", "compose"),
+								capsule(
+									capsule_btn("reply", "Reply", "reply", nil, not selected),
+									capsule_sep(),
+									capsule_btn("app-reply-all", "Reply All", "reply_all", nil, not selected),
+									capsule_sep(),
+									capsule_btn("app-forward", "Forward · ⇧⌘F", "forward", nil, not selected)
+								),
+								capsule(
+									capsule_btn("archive", "Archive selected or checked messages", { action = "archive_messages" }, "provider:mail", no_bulk),
+									capsule_sep(),
+									capsule_btn("trash-2", "Move selected or checked messages to Trash", { action = "trash_messages" }, "provider:mail", no_bulk),
+									capsule_sep(),
+									capsule_btn("folder-open", "Move to folder / configure folder roles", "organize")
+								),
+								capsule(
+									capsule_btn("flag", "Toggle flag", { action = "star" }, "provider:mail", no_action, false, "#f59e0b"),
+									capsule_sep(),
+									capsule_btn("mail-open", "Mark unread", { action = "unread" }, "provider:mail", no_action)
+								),
+								capsule(
+									capsule_btn("list-tree", if mail.threaded then "Show individual messages" else "Group messages into expandable threads", { action = "threaded" }, "provider:mail", false, mail.threaded),
+									capsule_sep(),
+									capsule_btn("refresh-cw", "Sync · ⌘R", { action = "sync" }, "provider:mail", mail.busy or mail.demo)
+								),
+								search_field("mail-search-pill", 190, 32, "Search", state),
+								ui.mount "feedback",
+							},
+							alerts,
+							mail_body,
+						},
+					},
+				},
+				status_bar,
+			}
+		end
 	end,
 }

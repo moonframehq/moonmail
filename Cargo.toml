@@ -36,7 +36,7 @@ mail-builder        = "2"
 mail-parser         = { features = ["full_encoding"], version = "1.0.1" }
 mail-send           = { default-features = false, features = ["aws_lc_rs", "tls12"], version = "0.7" }
 mailparse           = "0.18"
-moonframe           = { default-features = false, features = ["acp", "browser", "markdown", "studio"], git = "https://github.com/moonframehq/moonframe", rev = "602963440eacead4478f5bcda6cf6f78edb86c52" }
+moonframe           = { default-features = false, features = ["acp", "browser", "markdown", "studio"], git = "https://github.com/moonframehq/moonframe", rev = "0a98dffd238bf0ab6c1dae9343eae8776ce9cbaf" }
 moonmail-core       = { path = "crates/moonmail-core" }
 moonmail-mime       = { path = "crates/moonmail-mime" }
 moonmail-network    = { path = "crates/moonmail-network" }
@@ -50,7 +50,7 @@ percent-encoding    = "2"
 rcgen               = { default-features = false, features = ["aws_lc_rs", "pem"], version = "0.14.10" }
 reqwest             = { default-features = false, features = ["blocking", "json", "rustls-tls"], version = "0.12" }
 rpassword           = "7"
-rusqlite            = { features = ["bundled"], version = "0.40.2" }
+rusqlite            = { features = ["bundled"], version = "0.41.0" }
 rustls              = { default-features = false, features = ["aws_lc_rs", "std", "tls12"], version = "0.23" }
 secrecy             = { features = ["serde"], version = "0.10" }
 security-framework  = "=3.7.0"

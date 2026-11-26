@@ -4,6 +4,7 @@ mod cli;
 mod columns;
 mod file_export;
 mod fonts;
+mod layout;
 mod local;
 mod navigation;
 mod page;
@@ -14,8 +15,11 @@ mod sync_schedule;
 use {
     anyhow::Result,
     fs2::FileExt,
-    moonframe::Moonframe,
-    std::{fs::OpenOptions, process::ExitCode},
+    moonframe::{
+        Moonframe,
+        gpui_kit::{AssetSource, SharedString},
+    },
+    std::{borrow::Cow, fs::OpenOptions, process::ExitCode},
 };
 
 #[derive(moonframe::rust_embed::RustEmbed)]
@@ -23,9 +27,29 @@ use {
 #[folder = "app"]
 struct AppFiles;
 
+#[derive(moonframe::rust_embed::RustEmbed)]
+#[crate_path = "moonframe::rust_embed"]
+#[folder = "assets"]
+#[include = "icons/*.svg"]
+struct AppAssets;
+
+impl AssetSource for AppAssets {
+    fn load(&self, path: &str) -> Result<Option<Cow<'static, [u8]>>> {
+        Ok(Self::get(path).map(|file| file.data))
+    }
+
+    fn list(&self, path: &str) -> Result<Vec<SharedString>> {
+        Ok(Self::iter()
+            .filter(|name| name.starts_with(path))
+            .map(|name| SharedString::from(name.into_owned()))
+            .collect())
+    }
+}
+
 fn run() -> Result<ExitCode> {
     let args: Vec<_> = std::env::args().skip(1).collect();
-    let check = args.iter().any(|arg| arg == "--check");
+    let check = args.iter().any(|arg| arg == "--check")
+        || matches!(args.first().map(String::as_str), Some("mockup" | "mockups"));
     let temporary = if check {
         Some(tempfile::tempdir()?)
     } else {
@@ -76,6 +100,7 @@ fn run() -> Result<ExitCode> {
         .version(env!("CARGO_PKG_VERSION"))
         .icon(icon.png())
         .keep(["feedback"])
+        .assets(AppAssets)
         .embedded_app::<AppFiles>()
         .project_dir(env!("CARGO_MANIFEST_DIR"));
     let source = concat!(env!("CARGO_MANIFEST_DIR"), "/app");

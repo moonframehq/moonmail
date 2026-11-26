@@ -23,12 +23,12 @@ local function choose_provider(state, provider, account)
 	if provider == "microsoft" and not editing then state.server_config.smtp_host = microsoft_smtp(state.email) end
 end
 
-local DEFAULTS = { interface_family = ".AppleSystemUIFont", list_family = "JetBrains Mono", font_size = "12", reader_family = "Helvetica", reader_size = "12", threaded = false, mark_read = true, sync_minutes = "0", app_icon = "wax-seal" }
+local DEFAULTS = { interface_family = ".AppleSystemUIFont", list_family = "JetBrains Mono", font_size = "12", reader_family = "Helvetica", reader_size = "12", threaded = false, mark_read = true, sync_minutes = "0", app_icon = "wax-seal", layout = "mail" }
 local PAGES = { { "appearance", "Appearance", "palette", "#8b5cf6" }, { "fonts", "Fonts", "case-sensitive", "#f28b35" }, { "reading", "Reading & Lists", "list-tree", "#3894ef" }, { "sync", "Synchronization", "refresh-cw", "#3894ef" }, { "account", "Internet Accounts", "at-sign", "#3478f6" }, { "storage", "Storage", "archive", "#8b929b" } }
 local function values(p)
 	p = p or {}
 	return { interface_family = p.interface_family or DEFAULTS.interface_family, list_family = p.list_family or DEFAULTS.list_family,
-		font_size = tostring(p.font_size or 12), reader_family = (p.reader or {}).family or "Helvetica", reader_size = tostring((p.reader or {}).size or 12), threaded = p.threaded == true, mark_read = p.mark_read ~= false, sync_minutes = tostring(p.sync_minutes or 0), app_icon = p.app_icon or DEFAULTS.app_icon }
+		font_size = tostring(p.font_size or 12), reader_family = (p.reader or {}).family or "Helvetica", reader_size = tostring((p.reader or {}).size or 12), threaded = p.threaded == true, mark_read = p.mark_read ~= false, sync_minutes = tostring(p.sync_minutes or 0), app_icon = p.app_icon or DEFAULTS.app_icon, layout = p.layout or DEFAULTS.layout }
 end
 local function preview(state)
 	local size = if state.font_target == "reader_family" then state.values.reader_size else state.values.font_size
@@ -53,10 +53,10 @@ local function switch(on, msg)
 	return ui.row { class = "mm-switch", selected = on, width = 38, height = 22, shrink = false, align = "center", justify = if on then "end" else "start", msg = msg,
 		ui.row { class = "mm-switch-knob", width = 18, height = 18, shrink = false } }
 end
-local function segmented(options, current, to)
+local function segmented(options, current, to, width)
 	local segments = {}
 	for _, option in options do
-		table.insert(segments, ui.row { class = "mm-segment", selected = current == option[1], width = 62, height = 24, align = "center", justify = "center", msg = option[1], to = to, ui.text { option[2] } })
+		table.insert(segments, ui.row { class = "mm-segment", selected = current == option[1], width = width or 62, height = 24, align = "center", justify = "center", msg = if to then option[1] else { layout = option[1] }, to = to, ui.text { option[2] } })
 	end
 	return ui.row { class = "mm-segments", gap = "none", shrink = false, table.unpack(segments) }
 end
@@ -173,6 +173,7 @@ return mod {
 			elseif msg.provider then choose_provider(state, msg.provider); state.manual_provider = true; state.provider_list = false; state.lookup_note = nil; state.lookup_pending = false
 			elseif msg.field then state.values[msg.field] = msg.value; return save(state)
 			elseif msg.app_icon then state.values.app_icon = msg.app_icon; return save(state)
+			elseif msg.layout then state.values.layout = msg.layout; return save(state)
 			elseif msg.sync_minutes then state.values.sync_minutes = msg.sync_minutes; return save(state)
 			elseif msg.toggle then state.values[msg.toggle] = not state.values[msg.toggle]; return save(state)
 			elseif msg.msg == "font-search" then state.font_search = msg.value
@@ -199,7 +200,7 @@ return mod {
 			ui.image { src = "icons/" .. v.app_icon .. ".png", width = 40, height = 40 },
 			ui.column { gap = "none", ui.text { "Moonmail", weight = "semibold" }, ui.text { "Settings", tone = "muted", size = "small" } } } }
 		for _, entry in PAGES do
-			table.insert(nav, ui.row { class = "mm-settings-nav", height = 30, align = "center", shrink = false, selected = state.page == entry[1], msg = { page = entry[1] },
+			table.insert(nav, ui.row { class = "mm-settings-nav", height = 32, align = "center", shrink = false, selected = state.page == entry[1], msg = { page = entry[1] },
 				ui.row { width = 20, height = 20, shrink = false, justify = "center", align = "center", style = { background = entry[4], radius = 5 }, ui.icon { name = entry[3], size = "small", style = { color = "#ffffff" } } }, ui.text { entry[2] } })
 		end
 		local title = "Settings"
@@ -212,7 +213,13 @@ return mod {
 				return link_row(title, family(v[field]) .. " · " .. size .. " pt", { font_target = field })
 			end
 			content = page(
-				group(row("Color scheme", nil, segmented({ { "system", "Auto" }, { "light", "Light" }, { "dark", "Dark" } }, mode, "app:appearance")), hairline(), icon_picker(v.app_icon)),
+				group(
+					row("Color scheme", nil, segmented({ { "system", "Auto" }, { "light", "Light" }, { "dark", "Dark" } }, mode, "app:appearance")),
+					hairline(),
+					row("Window layout", "Also switchable from the View menu (⌘1, ⌘2, ⌘3).", segmented({ { "mailmate", "MailMate" }, { "mail", "Mail.app" }, { "moonmail", "Moonmail" } }, v.layout, nil, 76)),
+					hairline(),
+					icon_picker(v.app_icon)
+				),
 				ui.text { "Fonts", class = "mm-section-title" },
 				group(font_row("interface_family", "Interface & mailboxes", v.font_size), hairline(), font_row("list_family", "Messages & Correspondence", v.font_size), hairline(), font_row("reader_family", "Message reader", v.reader_size)),
 				ui.row { align = "center", shrink = false, ui.spacer {}, ui.button { label = "Restore Defaults", msg = "defaults" } }
@@ -260,9 +267,9 @@ return mod {
 	end,
 	styles = {
 		[".mm-settings-window"] = { background = "settings-window" },
-		[".mm-settings-sidebar"] = { padding = { 0, 10, 10, 10 }, gap = 2, background = "settings-sidebar", border = "right", border_color = "foreground/10" },
-		[".mm-identity"] = { padding = { 2, 6, 14, 6 }, gap = 10 },
-		[".mm-settings-nav"] = { padding = { 0, 6 }, gap = 8, radius = 8 },
+		[".mm-settings-sidebar"] = { padding = { 0, 12, 12, 12 }, gap = 6, background = "settings-sidebar", border = "right", border_color = "foreground/10" },
+		[".mm-identity"] = { padding = { 0, 6, 14, 6 }, gap = 10 },
+		[".mm-settings-nav"] = { padding = { 0, 10 }, gap = 9, radius = 8 },
 		[".mm-settings-nav:hover"] = { background = "foreground/6" },
 		[".mm-settings-nav:selected"] = { background = "foreground/10", weight = "semibold" },
 		[".mm-settings-content"] = { padding = { 16, 24, 24, 24 }, gap = 10 },

@@ -1,6 +1,7 @@
 //! Durable local archive and rebuildable projections.
 mod archive;
 mod blobs;
+mod correspondents;
 mod demo;
 mod drafts;
 mod error;
@@ -28,6 +29,7 @@ mod thread_graph;
 pub use {
     archive::{Archive, IncomingMessage, IndexWork},
     blobs::{BlobError, FileBlobs},
+    correspondents::Correspondent,
     demo::seed_demo,
     drafts::{
         Draft, DraftAttachment, DraftCursor, DraftPage, DraftSummary, MAX_ATTACHMENT_BYTES,

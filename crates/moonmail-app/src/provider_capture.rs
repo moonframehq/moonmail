@@ -13,6 +13,12 @@ impl Mail {
         );
         let mut mail = Self::new(root.to_owned(), true);
         mail.initialize()?;
+        if let Some(name) = view.strip_prefix("layout-") {
+            mail.handle(Data::map([
+                ("action", Data::String("layout".into())),
+                ("value", Data::String(name.into())),
+            ]))?;
+        }
         if view == "accounts" {
             for (provider, email) in [
                 (moonmail_network::Provider::Google, "you@gmail.com"),
@@ -93,6 +99,7 @@ impl Mail {
             "forward" => Some("forward"),
             "attachments" => Some("attachments"),
             "images" => Some("reader_images"),
+            "people" => Some("people"),
             "threads" | "columns" => Some("expand"),
             _ => None,
         };

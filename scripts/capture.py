@@ -36,7 +36,7 @@ def luau(value):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("output", type=Path)
-    parser.add_argument("view", choices=("mail", "threads", "thread-warning", "unread-navigation", "correspondence", "searches", "search-results", "partitions", "mailbox-chooser", "move-chooser", "copy-chooser", "folders", "tags", "rules", "columns", "column-settings", "export", "compose", "from-menu", "forward", "drafts", "attachments", "links", "images", "identities", "identity-compose", "settings", "fonts", "sync-settings", "accounts", "add-account", "providers", "gmail-setup", "imap-setup", "outbox", "feedback", "organize", "operations"), default="mail", nargs="?")
+    parser.add_argument("view", choices=("mail", "layout-mailmate", "layout-mail", "layout-moonmail", "threads", "thread-warning", "unread-navigation", "correspondence", "searches", "search-results", "partitions", "mailbox-chooser", "move-chooser", "copy-chooser", "folders", "tags", "rules", "columns", "column-settings", "export", "compose", "from-menu", "forward", "drafts", "attachments", "links", "images", "identities", "identity-compose", "settings", "fonts", "sync-settings", "accounts", "add-account", "providers", "gmail-setup", "imap-setup", "outbox", "people", "feedback", "organize", "operations"), default="mail", nargs="?")
     args = parser.parse_args()
     repo = Path(__file__).resolve().parent.parent
     binary = repo / "target/debug/moonmail"
@@ -139,7 +139,7 @@ def main():
         if source.count(marker) != 1:
             raise RuntimeError("Update the capture harness for the shell's initial view")
         settings_views = ("settings", "fonts", "sync-settings", "column-settings", "accounts", "add-account", "providers", "gmail-setup", "imap-setup")
-        pane = "settings" if args.view in settings_views else "mail" if args.view in ("feedback", "threads", "thread-warning", "unread-navigation", "images", "correspondence", "search-results", "columns") else "compose" if args.view in ("forward", "identity-compose") else args.view
+        pane = "settings" if args.view in settings_views else "mail" if args.view in ("feedback", "layout-mailmate", "layout-mail", "layout-moonmail", "threads", "thread-warning", "unread-navigation", "images", "correspondence", "search-results", "columns") else "compose" if args.view in ("forward", "identity-compose") else args.view
         if args.view in settings_views:
             source = source.replace("width = 1500, height = 940", "width = 980, height = 740")
             source = source.replace("local mail = app.mail or {}", 'local mail = app.mail or {}\n\t\tif state.pane == "settings" then return ui.mount "settings" end', 1)

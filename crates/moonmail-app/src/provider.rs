@@ -88,6 +88,7 @@ pub struct Mail {
     partition_selection: Option<(moonmail_store::PartitionField, String)>,
     partition_after: Option<String>,
     partition_panel: bool,
+    people: Vec<moonmail_store::Correspondent>,
     prepared_search: Option<String>,
     page: MailPage,
     expanded: HashMap<MessageId, Option<PageCursor>>,
@@ -143,6 +144,7 @@ impl Mail {
             partition_selection: None,
             partition_after: None,
             partition_panel: false,
+            people: Vec::new(),
             prepared_search: None,
             page: MailPage {
                 rows: Vec::new(),
@@ -378,6 +380,7 @@ impl Mail {
         snapshot["syncing"] = json!(self.sync_cancel.is_some());
         snapshot["sync_schedule"] = json!(self.sync_schedule.label());
         snapshot["saved_searches"] = json!(archive.saved_searches()?);
+        snapshot["people"] = json!(self.people);
         snapshot["active_saved_search"] = json!(self.active_saved_search);
         let move_selection = self.move_selection();
         snapshot["move_account"] = json!(self.move_account(&move_selection)?);
@@ -511,6 +514,7 @@ impl Mail {
         }
         match action.as_str() {
             "partition_close" => self.partition_panel = false,
+            "people" => self.people = self.archive()?.frequent_correspondents(30)?,
             "partition_open" | "partition_field" | "partition_first" | "partition_next"
             | "partition_choose" => self.handle_partition(&action, &message)?,
             "rule_save" | "rule_delete" | "rule_apply" | "rule_first" | "rule_next" => {
@@ -805,6 +809,14 @@ impl Mail {
                 self.preferences = settings;
                 self.status = "Column layout saved".into();
             },
+            "layout" => {
+                let layout = crate::layout::Layout::parse(&text("value"))?;
+                let mut settings = self.preferences.clone();
+                settings.layout = layout;
+                settings.save(&self.root)?;
+                self.preferences = settings;
+                self.status = format!("{} layout", layout.label());
+            },
             "settings_save" => {
                 let settings = crate::fonts::Preferences {
                     interface_family: text("interface_family").trim().to_owned(),
@@ -837,6 +849,10 @@ impl Mail {
                     app_icon: match text("app_icon").as_str() {
                         "" => self.preferences.app_icon,
                         name => crate::app_icon::AppIcon::parse(name)?,
+                    },
+                    layout: match text("layout").as_str() {
+                        "" => self.preferences.layout,
+                        name => crate::layout::Layout::parse(name)?,
                     },
                     columns: self.preferences.columns.clone(),
                 };
