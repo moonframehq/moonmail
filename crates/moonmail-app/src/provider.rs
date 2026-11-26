@@ -1005,11 +1005,7 @@ impl Mail {
                 anyhow::ensure!(paths.len() == 1, "Choose one mail source");
                 let path = PathBuf::from(paths[0].as_str().context("Invalid import path")?);
                 self.launch(move |root, _| {
-                    crate::mail_import::run(
-                        &path,
-                        &mut Archive::open(&root)?,
-                        &FileBlobs::new(&root),
-                    )?;
+                    crate::mail_import::from_path(&path, &root)?;
                     Ok(())
                 })?;
                 self.status = "Importing local mail…".into();

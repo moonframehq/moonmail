@@ -108,9 +108,7 @@ pub fn dispatch(root: &Path, args: &[String]) -> Result<bool> {
             let path = Path::new(args.get(1).context(
                 "Usage: moonmail import PATH (Maildir, mboxrd, .eml file or directory)",
             )?);
-            let mut archive = Archive::open(root)?;
-            let blobs = FileBlobs::new(root);
-            let count = crate::mail_import::run(path, &mut archive, &blobs)?;
+            let count = crate::mail_import::from_path(path, root)?;
             crate::local::index_all(root)?;
             println!("Imported {count} messages.");
         },

@@ -14,7 +14,17 @@ use {
 mod mbox;
 const LIMIT: usize = 64 * 1024 * 1024;
 
-pub(super) fn run(path: &Path, archive: &mut Archive, blobs: &FileBlobs) -> Result<usize> {
+pub(super) fn from_path(path: &Path, root: &Path) -> Result<usize> {
+    let source = path.canonicalize()?;
+    let destination = root.canonicalize()?;
+    ensure!(
+        !destination.starts_with(&source) && !source.starts_with(&destination),
+        "Choose a source outside the Moonmail archive"
+    );
+    run(path, &mut Archive::open(root)?, &FileBlobs::new(root))
+}
+
+fn run(path: &Path, archive: &mut Archive, blobs: &FileBlobs) -> Result<usize> {
     let mut reader = Import {
         archive,
         blobs,
@@ -80,7 +90,10 @@ impl Import<'_> {
                     let child = entry.path();
                     // Preserve legacy recursive .eml imports into Imported. A
                     // nested Maildir gets its own mailbox.
-                    let child_folder = if child.join("cur").is_dir() && child.join("new").is_dir() {
+                    let child_folder = if entry.file_type()?.is_dir()
+                        && child.join("cur").is_dir()
+                        && child.join("new").is_dir()
+                    {
                         format!("{folder}/{name}")
                     } else {
                         folder.to_owned()
@@ -96,6 +109,11 @@ impl Import<'_> {
             } else if explicit
                 || extension.eq_ignore_ascii_case("mbox")
                 || extension.eq_ignore_ascii_case("mbx")
+                || (path.file_name().is_some_and(|name| name == "mbox")
+                    && path
+                        .parent()
+                        .and_then(Path::extension)
+                        .is_some_and(|ext| ext.eq_ignore_ascii_case("mbox")))
             {
                 let file = File::open(path)?;
                 let mailbox = self.archive.mailbox("local", folder)?;
