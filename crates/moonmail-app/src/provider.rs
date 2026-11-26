@@ -107,6 +107,7 @@ pub struct Mail {
     identity_account: Option<String>,
     job: Option<Receiver<Event>>,
     workers: sync::Workers,
+    maildir: Option<crate::live_maildir::Worker>,
     status: String,
     error: String,
     html_url: String,
@@ -167,6 +168,7 @@ impl Mail {
             identity_account: None,
             job: None,
             workers: sync::Workers::default(),
+            maildir: None,
             status: "Local mail, at your pace".into(),
             error: String::new(),
             html_url: String::new(),
@@ -1061,6 +1063,15 @@ impl Mail {
                     Ok(())
                 })?;
             },
+            "maildir_attach" => {
+                let Some(Data::List(paths)) = message.get("paths") else {
+                    bail!("Choose a Maildir folder")
+                };
+                anyhow::ensure!(paths.len() == 1, "Choose one Maildir root");
+                let path = PathBuf::from(paths[0].as_str().context("Invalid Maildir path")?);
+                self.launch(move |root, _| crate::live_maildir::attach(&root, &path))?;
+                self.status = "Connecting live Maildir…".into();
+            },
             "mail_import" => {
                 let Some(Data::List(paths)) = message.get("paths") else {
                     bail!("Choose a mail file or directory");
@@ -1084,6 +1095,13 @@ impl Mail {
 }
 
 impl Mail {
+    fn start_maildir(&mut self) -> Result<()> {
+        if self.maildir.is_none() && !self.archive()?.maildir_accounts()?.is_empty() {
+            self.maildir = Some(crate::live_maildir::Worker::start(self.root.clone())?);
+        }
+        Ok(())
+    }
+
     fn initialize(&mut self) -> Result<()> {
         let archive = Archive::open(&self.root)?;
         self.preferences = crate::fonts::Preferences::load(&self.root)?;
@@ -1092,6 +1110,7 @@ impl Mail {
         self.index = Some(crate::local::open_index(&self.root, &archive)?);
         self.draft = archive.latest_draft()?;
         self.archive = Some(archive);
+        self.start_maildir()?;
         if self.preferences.sync_paused {
             self.workers.pause();
         }
@@ -1185,8 +1204,50 @@ impl Native for Mail {
         }
         if done {
             self.job = None;
-            if let Err(error) = self.configure_workers() {
+            if let Err(error) = self.configure_workers().and_then(|()| self.start_maildir()) {
                 self.error = format!("{error:#}");
+            }
+        }
+        let mut maildir_changed = false;
+        if let Some(worker) = &self.maildir {
+            for event in worker.events.try_iter() {
+                changed = true;
+                maildir_changed = true;
+                self.prepared_search = None;
+                match event {
+                    Ok(()) => {
+                        if self.status == "Retrying live Maildir" {
+                            self.error.clear();
+                        }
+                        self.status = "Live Maildir updated".into();
+                    },
+                    Err(error) => {
+                        self.status = "Retrying live Maildir".into();
+                        self.error = error;
+                    },
+                }
+            }
+        }
+        if maildir_changed
+            && let Some(selected) = &mut self.selected
+            && let Some(archive) = &self.archive
+        {
+            match archive.live_summary(selected.summary.id) {
+                Ok(Some(summary)) => selected.summary = summary,
+                Ok(None) => {
+                    if self.anchor == Some(selected.summary.id) {
+                        self.anchor = None;
+                    }
+                    self.checked.remove(&selected.summary.id);
+                    self.selected = None;
+                    self.attachments.clear();
+                    self.attachment_message = None;
+                    self.reader_links = Default::default();
+                    self.reader_images.clear();
+                    self.html_url.clear();
+                    self.plain_url.clear();
+                },
+                Err(error) => self.error = format!("{error:#}"),
             }
         }
         match self.poll_workers() {

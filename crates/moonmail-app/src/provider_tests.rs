@@ -1138,3 +1138,51 @@ fn layout_switching_persists_validates_and_renders_all_three_modes() -> Result<(
     assert_eq!(mail.preferences.layout, crate::layout::Layout::MailMate);
     Ok(())
 }
+
+#[test]
+fn connect_live_maildir_from_picker_and_resume_on_launch() -> Result<()> {
+    let store = tempfile::tempdir()?;
+    let tree = tempfile::tempdir()?;
+    for name in ["cur", "new", "tmp"] {
+        std::fs::create_dir(tree.path().join(name))?;
+    }
+    std::fs::write(
+        tree.path().join("new/synthetic"),
+        b"Subject: Shared mailbox\r\n\r\nSynthetic message",
+    )?;
+    let mut mail = Mail::new(store.path().into(), false);
+    mail.initialize()?;
+    mail.handle(data(
+        json!({"action":"maildir_attach","paths":[tree.path()]}),
+    ))?;
+    let timeout = std::time::Duration::from_secs(20);
+    match mail
+        .job
+        .take()
+        .context("attach job")?
+        .recv_timeout(timeout)?
+    {
+        Event::Done(Ok(())) => {},
+        _ => bail!("Maildir attachment failed"),
+    }
+    drop(mail);
+    let mut mail = Mail::new(store.path().into(), false);
+    mail.initialize()?;
+    let wait = |mail: &Mail| -> Result<()> {
+        mail.maildir
+            .as_ref()
+            .context("Maildir worker")?
+            .events
+            .recv_timeout(timeout)?
+            .map_err(anyhow::Error::msg)
+    };
+    wait(&mail)?;
+    mail.refresh()?;
+    let id = mail.page.rows.first().context("live row")?.id;
+    mail.handle(data(json!({"action":"select","id":id})))?;
+    mail.handle(data(json!({"action":"star"})))?;
+    wait(&mail)?;
+    assert!(tree.path().join("cur/synthetic:2,FS").exists());
+    assert!(mail.archive()?.detail(id)?.summary.starred);
+    Ok(())
+}

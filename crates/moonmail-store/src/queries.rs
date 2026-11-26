@@ -14,6 +14,19 @@ pub(crate) const SUMMARY: &str =
     EXISTS(SELECT 1 FROM occurrences o WHERE o.message_id=m.id AND flagged=1),1 FROM messages m";
 const LIVE: &str = "EXISTS(SELECT 1 FROM occurrences o WHERE o.message_id=m.id)";
 
+impl Archive {
+    pub fn live_summary(&self, id: MessageId) -> Result<Option<MailSummary>> {
+        Ok(self
+            .connection
+            .query_row(
+                &format!("{SUMMARY} WHERE m.id=?1 AND {LIVE}"),
+                [id.0 as i64],
+                summary,
+            )
+            .optional()?)
+    }
+}
+
 impl MailRepository for Archive {
     type Error = Error;
 

@@ -65,6 +65,7 @@ fn member(row: &rusqlite::Row<'_>) -> rusqlite::Result<FolderMember> {
 }
 
 fn plan(db: &Connection, account: &str, edit: FolderEdit, remote: bool) -> Result<FolderOperation> {
+    crate::maildir::check_folder_editable(db, account)?;
     if account.is_empty() {
         return Err(Error::Invalid("Choose a folder account"));
     }

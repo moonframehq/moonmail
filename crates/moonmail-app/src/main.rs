@@ -5,6 +5,7 @@ mod columns;
 mod file_export;
 mod fonts;
 mod layout;
+mod live_maildir;
 mod local;
 mod mail_import;
 mod navigation;

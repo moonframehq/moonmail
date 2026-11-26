@@ -27,6 +27,7 @@ moonmail-store.workspace   = true
 open.workspace             = true
 percent-encoding.workspace = true
 rpassword.workspace        = true
+rustix.workspace           = true
 serde.workspace            = true
 serde_json.workspace       = true
 tempfile.workspace         = true

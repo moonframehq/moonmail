@@ -11,6 +11,7 @@ mod gmail;
 mod identities;
 mod keywords;
 mod mailboxes;
+mod maildir;
 mod moves;
 mod operations;
 mod outbox;
@@ -44,6 +45,7 @@ pub use {
     gmail::valid_gmail_label,
     identities::Identity,
     keywords::{KeywordLabel, KeywordOperation},
+    maildir::{MaildirAccount, MaildirFile, MaildirLocation},
     moves::{MoveOperation, MoveTarget},
     operations::PendingFlag,
     outbox::{OutboxItem, OutboxPage},

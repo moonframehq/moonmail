@@ -52,6 +52,7 @@ rcgen               = { default-features = false, features = ["aws_lc_rs", "pem"
 reqwest             = { default-features = false, features = ["blocking", "json", "rustls-tls"], version = "0.12" }
 rpassword           = "7"
 rusqlite            = { features = ["bundled"], version = "0.41.0" }
+rustix              = { features = ["fs"], version = "1" }
 rustls              = { default-features = false, features = ["aws_lc_rs", "std", "tls12"], version = "0.23" }
 secrecy             = { features = ["serde"], version = "0.10" }
 security-framework  = "=3.7.0"
