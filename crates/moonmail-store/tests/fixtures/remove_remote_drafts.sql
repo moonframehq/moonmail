@@ -1,0 +1,13 @@
+DROP TRIGGER draft_cleanup;
+DROP TRIGGER draft_account_change;
+DROP TABLE draft_uploads;
+DROP TABLE expunge_operations;
+DROP TABLE deletion_inventory;
+DROP INDEX draft_remote_identity;
+DROP INDEX draft_upload_queue;
+ALTER TABLE drafts DROP COLUMN remote_mailbox;
+ALTER TABLE drafts DROP COLUMN remote_epoch;
+ALTER TABLE drafts DROP COLUMN remote_uid;
+ALTER TABLE drafts DROP COLUMN remote_synced_at;
+ALTER TABLE drafts DROP COLUMN pending_remote_delete;
+ALTER TABLE drafts DROP COLUMN dirty;

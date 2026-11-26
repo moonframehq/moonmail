@@ -12,6 +12,10 @@ pub enum Error {
     Io(#[from] std::io::Error),
     #[error("invalid account data")]
     Json(#[from] serde_json::Error),
+    #[error(transparent)]
+    DraftAttachment(#[from] moonmail_mime::AttachmentError),
+    #[error(transparent)]
+    DraftParse(#[from] moonmail_mime::StalwartError),
     #[error("invalid recipient address")]
     Address(#[from] mailparse::MailParseError),
     #[error(transparent)]

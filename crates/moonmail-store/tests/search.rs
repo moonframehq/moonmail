@@ -142,7 +142,7 @@ fn projection_upgrade_replays_cc_and_sender_names_and_failed_search_keeps_previo
     drop(archive);
     let connection = rusqlite::Connection::open(directory.path().join("archive.sqlite3"))?;
     connection.execute_batch(concat!(
-        include_str!("fixtures/remove_gmail.sql"),
+        concat!(include_str!("fixtures/remove_remote_drafts.sql"),include_str!("fixtures/remove_gmail.sql")),
         include_str!("fixtures/remove_sent_copy.sql")
     ))?;
     connection.execute_batch(

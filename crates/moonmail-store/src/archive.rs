@@ -46,7 +46,7 @@ impl Archive {
             transaction.pragma_query_value(None, "user_version", |row| row.get(0))?;
         match version {
             0 => transaction.execute_batch(include_str!("schema.sql"))?,
-            1..=21 => {},
+            1..=22 => {},
             version => return Err(Error::Schema(version)),
         }
         if version < 2 {
@@ -126,6 +126,9 @@ impl Archive {
         }
         if version < 21 {
             transaction.execute_batch(include_str!("gmail.sql"))?;
+        }
+        if version < 22 {
+            transaction.execute_batch(include_str!("remote_drafts.sql"))?;
         }
         transaction.commit()?;
         connection.execute_batch(

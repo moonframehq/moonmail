@@ -312,7 +312,7 @@ fn migration_restarts_after_a_failed_page_without_reading_blobs() -> Result {
     let db = f.db()?;
     db.execute_batch(concat!(
         concat!(
-            include_str!("fixtures/remove_gmail.sql"),
+            concat!(include_str!("fixtures/remove_remote_drafts.sql"),include_str!("fixtures/remove_gmail.sql")),
             include_str!("fixtures/remove_sent_copy.sql")
         ),
         "DROP TABLE search_partitions; DROP TABLE keyword_rule_runs; DROP TABLE keyword_rules;"
@@ -352,7 +352,7 @@ fn migration_restarts_after_a_failed_page_without_reading_blobs() -> Result {
     )?;
     db.execute_batch(concat!(
         concat!(
-            include_str!("fixtures/remove_gmail.sql"),
+            concat!(include_str!("fixtures/remove_remote_drafts.sql"),include_str!("fixtures/remove_gmail.sql")),
             include_str!("fixtures/remove_sent_copy.sql")
         ),
         "DROP TABLE search_partitions; DROP TABLE keyword_rule_runs; DROP TABLE keyword_rules;"

@@ -375,6 +375,18 @@ return mod {
 		elseif msg == "rules" then state.pane = "rules"
 		elseif type(msg) == "table" then
 			if msg.cancelled then return state
+			elseif msg.expunge_prompt then
+				state.expunge = table.clone(msg.expunge_prompt)
+				state.expunge.message = msg.message
+				state.expunge.subject = msg.subject
+				state.pane = "confirm-expunge"
+			elseif msg.confirm_expunge and state.expunge then
+				local request = state.expunge
+				state.expunge = nil
+				state.pane = "operations"
+				request.confirmed = true
+				request.action = if request.message then "confirm_delete_message" else "confirm_empty_folder"
+				return state, { { to = "provider:mail", msg = request } }
 			elseif msg.rule_edit then state.rule_edit = table.clone(msg.rule_edit)
 			elseif msg.rule_folder and state.rule_edit then state.rule_edit.mailbox = msg.rule_folder
 			elseif msg.rule_field and state.rule_edit then state.rule_edit[msg.rule_field] = msg.value
@@ -499,6 +511,14 @@ return mod {
 				ui.text { "Exports include the selected message on each checked row, not hidden replies. Import the resulting folder to recover message contents. Folder membership, flags, drafts, settings and credentials are not part of this export.", tone = "muted" },
 				ui.row { ui.button { label = "Choose destination…", disabled = #(mail.move_selection or {}) == 0, msg = { export_messages = mail.move_selection, scope = mail.mailbox } }, ui.button { label = "Back to mail", msg = "mail" } },
 			}
+		elseif state.pane == "confirm-expunge" and state.expunge then
+			local item = state.expunge
+			reader = ui.column { class = "form", grow = true,
+				ui.text { "Confirm permanent deletion", class = "title" },
+				ui.text { if item.message then "Permanently delete “" .. item.subject .. "” from " .. item.name .. "?" else "Permanently delete all messages from the last synced inventory of " .. item.name .. "?" },
+				ui.text { item.account .. " · This removes the server copies and cannot be undone." },
+				ui.row { ui.button { label = "Cancel", msg = "organize" }, ui.button { label = "Confirm permanent deletion", msg = { confirm_expunge = true } } },
+			}
 		elseif state.pane == "organize" then
 			local items = { ui.text { "Move & folders", class = "title" },
 				ui.text { "Move the selected message or checked rows. Remote moves run on the next Sync; local demo/import moves apply immediately.", class = "muted" },
@@ -512,6 +532,12 @@ return mod {
 				},
 				ui.button { label = "Tags & keywords…", small = true, msg = "tags" },
 			}
+			for _, folder in mail.deletion_folders or {} do
+				table.insert(items, ui.row { ui.text { folder.account .. " · " .. folder.name },
+					ui.button { label = if folder.role == "trash" then "Empty Trash…" else "Empty Junk…", msg = { expunge_prompt = folder } },
+					if selected and folder.id == mail.mailbox and folder.selected_uid then ui.button { label = "Delete Permanently…", msg = { expunge_prompt = folder, message = selected.summary.id, subject = selected.summary.subject } } else nil,
+				})
+			end
 			for _, folder in mail.mailboxes or {} do
 				if folder.selectable then table.insert(items, ui.row { padding = "small", align = "center",
 					ui.column { grow = true, ui.text { folder.name, weight = "semibold" }, ui.text { folder.account .. (if folder.role then " · " .. folder.role else ""), tone = "muted", size = "small" } },
@@ -519,6 +545,7 @@ return mod {
 					action("Copy here", "copy_messages", { id = folder.id }),
 					action("Use as Archive", "folder_role", { id = folder.id, role = "archive" }),
 					action("Use as Trash", "folder_role", { id = folder.id, role = "trash" }),
+					action("Use as Drafts", "folder_role", { id = folder.id, role = "drafts" }),
 					action("Use as Sent", "folder_role", { id = folder.id, role = "sent" }),
 					action("Use as Junk", "folder_role", { id = folder.id, role = "junk" }),
 					action("Server default", "folder_role", { id = folder.id, role = "default" }),
@@ -528,9 +555,16 @@ return mod {
 		elseif state.pane == "operations" then
 			local items = { ui.text { "Mail operations", class = "title" },
 				ui.text { "Queued moves survive restart. Sync processes up to 100 per run. Uncertain moves are never automatically repeated.", class = "muted" },
-				ui.text { tostring(mail.unresolved_operations or 0) .. " unresolved · showing up to 100 transfers and 100 folder changes, unresolved first in each group", class = "muted" },
+				ui.text { tostring(mail.unresolved_operations or 0) .. " unresolved · showing up to 100 records per group, unresolved first", class = "muted" },
 				ui.row { ui.button { label = "Sync now", small = true, disabled = mail.busy or mail.demo, msg = { action = "sync" }, to = "provider:mail" }, ui.button { label = "Tags & keyword recovery", small = true, msg = "tags" }, ui.button { label = "Back to mail", small = true, msg = "mail" } },
 			}
+			for _, item in mail.remote_operations or {} do
+				table.insert(items, ui.row { ui.text { item.kind .. (if item.subject and item.subject ~= "" then " · " .. item.subject else "") .. " · " .. item.account .. " · " .. item.mailbox .. (if item.uid > 0 then " · UID " .. tostring(item.uid) else "") .. " · " .. item.state },
+					if item.kind == "Draft upload" then ui.button { label = "I checked Drafts for this copy — retry", disabled = mail.busy, msg = { action = "retry_draft_upload", message_id = item.message_id }, to = "provider:mail" } else nil,
+					if item.kind == "Delete" and item.state == "stale" then action("Dismiss changed UIDVALIDITY", "expunge_dismiss", { id = item.id }) else nil,
+					if item.kind == "Delete" and (item.state == "unknown" or item.state == "unsupported") then action("Retry verified UID", "expunge_retry", { id = item.id }) else nil,
+				})
+			end
 			for _, item in mail.move_operations or {} do
 				table.insert(items, ui.column { padding = "normal", gap = "small",
 					ui.text { item.subject, weight = "semibold" },
@@ -550,7 +584,7 @@ return mod {
 					if item.state == "unknown" then action("I inspected the folder outcome — dismiss", "folder_dismiss", { id = item.id }) else nil,
 				})
 			end
-			if #(mail.move_operations or {}) == 0 and #(mail.folder_operations or {}) == 0 then table.insert(items, ui.text { "No transfer or folder operations yet. Keyword edits are shown in Tags.", tone = "muted" }) end
+			if #(mail.remote_operations or {}) == 0 and #(mail.move_operations or {}) == 0 and #(mail.folder_operations or {}) == 0 then table.insert(items, ui.text { "No transfer or folder operations yet. Keyword edits are shown in Tags.", tone = "muted" }) end
 			reader = ui.column { class = "form", grow = true, scroll = true, table.unpack(items) }
 		elseif state.pane == "outbox" then
 			local items = { ui.text { "Outbox", class = "title" }, ui.text { "Unknown delivery cannot be retried here. Check Sent before composing a replacement.", class = "muted" },

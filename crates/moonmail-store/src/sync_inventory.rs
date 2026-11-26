@@ -126,6 +126,11 @@ impl Archive {
         )? {
             crate::gmail::reconcile(&transaction, mailbox, epoch)?;
         }
+        transaction.execute(
+            "DELETE FROM deletion_inventory WHERE mailbox_id=?1 AND (epoch<>?2 OR uid<=?3)",
+            params![mailbox, epoch, upper],
+        )?;
+        transaction.execute("INSERT INTO deletion_inventory SELECT m.id,?2,s.uid FROM mailboxes m CROSS JOIN sync_inventory s WHERE m.id=?1 AND COALESCE(m.user_role,m.server_role) IN ('trash','junk')", params![mailbox,epoch])?;
         transaction.execute("UPDATE sync_scope SET mailbox=?1,complete=1", [mailbox])?;
         transaction.execute("DELETE FROM occurrence_keywords AS k WHERE k.mailbox_id=?1
             AND EXISTS(SELECT 1 FROM occurrences o JOIN sync_inventory s ON s.uid=o.uid WHERE o.mailbox_id=k.mailbox_id AND o.message_id=k.message_id AND o.epoch=?2)

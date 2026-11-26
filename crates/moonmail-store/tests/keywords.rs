@@ -216,7 +216,7 @@ fn local_transfers_labels_live_search_and_v16_migration() -> Result {
     assert_eq!(archive.saved_search(saved)?.predicate, predicate);
     drop(archive);
     db.execute_batch(concat!(
-        include_str!("fixtures/remove_gmail.sql"),
+        concat!(include_str!("fixtures/remove_remote_drafts.sql"),include_str!("fixtures/remove_gmail.sql")),
         include_str!("fixtures/remove_sent_copy.sql")
     ))?;
     db.execute_batch("DROP TABLE search_partitions; DROP TABLE keyword_rule_runs; DROP TABLE keyword_rules; DROP TABLE occurrence_keywords; DROP TABLE keyword_operations; DROP TABLE keyword_labels; PRAGMA user_version=16;")?;
@@ -226,7 +226,7 @@ fn local_transfers_labels_live_search_and_v16_migration() -> Result {
     assert!(archive.keyword_operations("a", 0)?.is_empty());
     assert_eq!(
         db.pragma_query_value(None, "user_version", |r| r.get::<_, i64>(0))?,
-        21
+        22
     );
     Ok(())
 }
@@ -238,7 +238,7 @@ fn v20_migration_preserves_mailboxes_and_blocked_keyword_intent() -> Result {
     let mailbox = archive.mailbox("synthetic", "[Gmail]/Important")?;
     drop(archive);
     let db = rusqlite::Connection::open(dir.path().join("archive.sqlite3"))?;
-    db.execute_batch(include_str!("fixtures/remove_gmail.sql"))?;
+    db.execute_batch(concat!(include_str!("fixtures/remove_remote_drafts.sql"),include_str!("fixtures/remove_gmail.sql")))?;
     db.execute("INSERT INTO keyword_operations(id,mailbox_id,epoch,uid,keyword,value,state,detail) VALUES(42,?1,7,1,'work',1,'blocked','test')",[mailbox])?;
     db.execute_batch("PRAGMA user_version=20")?;
     drop(db);

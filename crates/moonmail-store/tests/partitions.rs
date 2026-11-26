@@ -139,7 +139,7 @@ fn partition_configuration_survives_parent_edits_and_restart_and_cascades_on_del
     drop(archive);
     let db = rusqlite::Connection::open(dir.path().join("archive.sqlite3"))?;
     db.execute_batch(concat!(
-        include_str!("fixtures/remove_gmail.sql"),
+        concat!(include_str!("fixtures/remove_remote_drafts.sql"),include_str!("fixtures/remove_gmail.sql")),
         include_str!("fixtures/remove_sent_copy.sql")
     ))?;
     db.execute_batch("DROP TABLE search_partitions; PRAGMA user_version=18;")?;

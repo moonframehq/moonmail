@@ -419,7 +419,7 @@ fn build_message(
 /// Keep the original root and the newest ancestors, then append the immediate
 /// parent exactly once. Bound outgoing headers to 100 IDs; malformed historical
 /// IDs are omitted, but an invalid immediate parent is an explicit error.
-fn reply_references(draft: &Draft) -> Result<Vec<&str>> {
+pub(crate) fn reply_references(draft: &Draft) -> Result<Vec<&str>> {
     fn valid(id: &str) -> bool {
         !id.is_empty()
             && id.len() <= 995

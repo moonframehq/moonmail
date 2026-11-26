@@ -104,7 +104,6 @@ impl Mail {
                 anyhow::ensure!(text("id") == draft.id, "This compose view is stale");
                 // Inputs are persisted before this ordered close request. Keep
                 // the draft available; closing its window is not discarding it.
-                self.archive()?.save_draft(draft)?;
             },
             "draft_account" => {
                 let mut draft = self.draft.clone().context("Open a draft first")?;

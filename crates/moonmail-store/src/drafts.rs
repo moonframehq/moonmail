@@ -121,7 +121,7 @@ impl Archive {
             "INSERT INTO drafts(id,recipients,subject,body,reply_id,updated,references_json,cc,bcc,account,attachments_json,identity_json)
              SELECT ?1,?2,?3,?4,?5,MAX(CAST(unixepoch('subsec')*1000 AS INTEGER),COALESCE((SELECT MAX(updated)+1 FROM drafts),0)),?6,?7,?8,?9,?10,?11
              WHERE NOT EXISTS(SELECT 1 FROM outbox WHERE draft_id=?1)
-             ON CONFLICT(id) DO UPDATE SET recipients=excluded.recipients,subject=excluded.subject,body=excluded.body,reply_id=excluded.reply_id,references_json=excluded.references_json,cc=excluded.cc,bcc=excluded.bcc,account=excluded.account,attachments_json=excluded.attachments_json,identity_json=excluded.identity_json,updated=excluded.updated",
+             ON CONFLICT(id) DO UPDATE SET recipients=excluded.recipients,subject=excluded.subject,body=excluded.body,reply_id=excluded.reply_id,references_json=excluded.references_json,cc=excluded.cc,bcc=excluded.bcc,account=excluded.account,attachments_json=excluded.attachments_json,identity_json=excluded.identity_json,dirty=1,updated=excluded.updated",
             params![draft.id,draft.recipients,draft.subject,draft.body,draft.reply_id,serde_json::to_string(&draft.references)?,draft.cc,draft.bcc,draft.account,serde_json::to_string(&draft.attachments)?,draft.identity.as_ref().map(serde_json::to_string).transpose()?],
         )?;
         if count == 0 {

@@ -344,7 +344,7 @@ impl Mail {
             "page_count":self.page.rows.len(),
             "checked_count":self.checked.len(),
             "move_operations":archive.move_operations()?,
-            "unresolved_operations":archive.unresolved_move_count()? + archive.unresolved_folder_count()? + archive.unresolved_keyword_count()?,
+            "unresolved_operations":archive.unresolved_move_count()? + archive.unresolved_folder_count()? + archive.unresolved_keyword_count()? + archive.unresolved_remote_count()?,
             "selected_moving":self.selected.as_ref().map(|detail|archive.has_pending_move(detail.summary.id)).transpose()?.unwrap_or(false),
             "list_key":format!("{:016x}",list_hash.finish()),"anchor":self.anchor,
             "selected":self.selected.as_ref().map(|detail|json!({"summary":detail.summary,"html":detail.html.is_some()})),"related":related,
@@ -371,6 +371,24 @@ impl Mail {
                 ));
             }
         }
+        snapshot["remote_operations"] = json!(archive.remote_operations(None)?);
+        let mut deletion_folders = Vec::new();
+        for folder in &mailboxes {
+            if !self.demo
+                && folder.account != "local"
+                && folder.epoch > 0
+                && let Some(role @ (MailboxRole::Trash | MailboxRole::Junk)) = folder.role
+                && archive.role_mailbox(&folder.account, role).ok() == Some(folder.id)
+            {
+                let (upper, selected_uid) = archive.deletion_bounds(
+                    folder.id,
+                    folder.epoch,
+                    self.selected.as_ref().map(|s| s.summary.id),
+                )?;
+                deletion_folders.push(json!({"id":folder.id,"name":folder.name,"epoch":folder.epoch,"role":role,"account":folder.account,"upper":upper,"selected_uid":selected_uid}));
+            }
+        }
+        snapshot["deletion_folders"] = json!(deletion_folders);
         snapshot["folder_operations"] = json!(archive.folder_operations()?);
         self.keyword_snapshot(&mut snapshot)?;
         self.rule_snapshot(&mut snapshot)?;
@@ -524,6 +542,34 @@ impl Mail {
             | "keyword_next" | "keyword_first" | "keyword_retry" | "keyword_discard" => {
                 self.handle_keyword(&action, &message)?
             },
+            "confirm_empty_folder" | "confirm_delete_message" => {
+                self.confirm_expunge(&action, &message)?
+            },
+            "retry_draft_upload" => {
+                anyhow::ensure!(
+                    self.job.is_none(),
+                    "Wait for the current Sync before retrying"
+                );
+                self.archive()?.retry_draft_upload(&text("message_id"))?;
+            },
+            "expunge_dismiss" => {
+                self.archive_mut()?.finish_expunge(
+                    message
+                        .get("id")
+                        .and_then(Data::as_i64)
+                        .context("Missing operation")?,
+                    "dismissed",
+                )?;
+            },
+            "expunge_retry" => {
+                self.archive_mut()?.finish_expunge(
+                    message
+                        .get("id")
+                        .and_then(Data::as_i64)
+                        .context("Missing operation")?,
+                    "queued",
+                )?;
+            },
             "folder_create" | "folder_rename" | "folder_delete" | "folder_cancel"
             | "folder_dismiss" => self.handle_folder_edit(&action, &message)?,
             "seek_unread" | "seek_thread" => {
@@ -646,6 +692,7 @@ impl Mail {
                     "trash" => Some(MailboxRole::Trash),
                     "sent" => Some(MailboxRole::Sent),
                     "junk" => Some(MailboxRole::Junk),
+                    "drafts" => Some(MailboxRole::Drafts),
                     "default" => None,
                     _ => bail!("Choose Archive, Trash, Sent, Junk, or server default"),
                 };

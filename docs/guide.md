@@ -389,6 +389,21 @@ reusable composer is supported; opening another draft replaces its saved content
 Drafts appear as compact message-style rows. **Save & close** keeps the draft;
 successful queueing or discarding closes the composer.
 
+Sync uploads local edits and imports other devices’ drafts when the account has
+one selectable Drafts role. Choose **Use as Drafts** in **Move & folders** to
+resolve an ambiguous role. Remote drafts open in the plain-text composer.
+Bcc and attachments are part of the server draft. Concurrent edits can produce
+two drafts, preserving both versions. If APPEND loses its acknowledgement, Sync
+looks for the upload’s unique Message-ID. Check the server before manually
+retrying an unknown upload in **Mail operations**.
+
+In **Move & folders**, select **Delete Permanently** for the selected Trash or
+Junk message, or **Empty Trash** / **Empty Junk** for the last synced inventory.
+Confirm the account and folder. Sync deletes only the confirmed UIDs, preserving
+later arrivals and locally archived MIME. Deletion requires UIDPLUS. Check
+**Mail operations** for unsupported servers, changed UIDVALIDITY, or interrupted
+commands. Retrying a deletion verifies the original UIDVALIDITY again.
+
 Compose has **To**, **Cc**, and **Bcc** fields accepting display names, quoted
 commas, and address groups. Unicode display names are supported; mailbox addresses
 must be ASCII. At most 100 unique recipients can be sent, deduplicated To → Cc → Bcc
@@ -611,7 +626,7 @@ live views; original bytes remain in the archive.
   queries compute ranks over matching metadata; they are not yet benchmarked on
   million-message archives.
 - Plain-text composition, forwarding, configured identities/signatures, and
-  local-only drafts; rich-text composition is not implemented. Raw MIME attachments
+  IMAP-synchronized drafts; rich-text composition is not implemented. Raw MIME attachments
   are preserved. Self-exclusion recognizes the account and explicitly configured
   aliases. Restart draft pagination after edits to include newly promoted rows.
 - Attachment inspection uses the `mailparse` adapter on demand (64 MiB raw input,

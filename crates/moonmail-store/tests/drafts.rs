@@ -63,3 +63,50 @@ fn draft_pages_cover_all_metadata_and_reopen_preserves_independent_content() -> 
     assert_eq!(other.account, "me@example.org");
     Ok(())
 }
+
+#[test]
+fn migration_and_lost_append_receipt_preserve_newer_edits_and_discard_intent() -> Result {
+    let dir = tempfile::tempdir()?;
+    let mut draft = Draft {
+        id: "migrate".into(),
+        account: "me@example.org".into(),
+        body: "before".into(),
+        ..Default::default()
+    };
+    Archive::open(dir.path())?.save_draft(&draft)?;
+    let db = rusqlite::Connection::open(dir.path().join("archive.sqlite3"))?;
+    db.execute_batch(include_str!("fixtures/remove_remote_drafts.sql"))?;
+    db.execute_batch("PRAGMA user_version=20")?;
+    let mut archive = Archive::open(dir.path())?;
+    let (_, revision) = archive
+        .dirty_draft(&draft.account, 0)?
+        .ok_or("legacy draft was lost")?;
+    assert!(archive.claim_draft_upload(&draft, revision, "Drafts", "first@moonmail.local")?);
+    draft.body = "during APPEND".into();
+    archive.save_draft(&draft)?;
+    assert!(archive.accept_draft_upload(&draft.account, "Drafts", 7, 3, "first@moonmail.local")?);
+    let (_, next) = archive
+        .dirty_draft(&draft.account, 0)?
+        .ok_or("concurrent edit lost")?;
+    assert!(next > revision);
+    assert!(archive.claim_draft_upload(&draft, next, "Drafts", "next@moonmail.local")?);
+    archive.discard_draft(&draft.id)?;
+    drop(archive);
+    let mut archive = Archive::open(dir.path())?;
+    assert!(archive.draft(&draft.id)?.is_none());
+    assert!(archive.accept_draft_upload(&draft.account, "Drafts", 7, 4, "next@moonmail.local")?);
+    let ops = archive.remote_operations(Some(&draft.account))?;
+    assert_eq!(
+        ops.iter().map(|op| (op.epoch, op.uid)).collect::<Vec<_>>(),
+        [(7, 3), (7, 4)]
+    );
+    assert!(archive.claim_expunge(ops[0].id)?);
+    assert!(!archive.claim_expunge(ops[0].id)?);
+    assert_eq!(
+        Archive::open(dir.path())?
+            .remote_operations(Some(&draft.account))?
+            .len(),
+        1
+    );
+    Ok(())
+}

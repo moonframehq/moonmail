@@ -54,7 +54,7 @@ fn header_and_source_dates_survive_restart_and_legacy_migration_does_not_invent_
     let db = rusqlite::Connection::open(dir.path().join("archive.sqlite3"))?;
     db.execute_batch(concat!(
         concat!(
-            include_str!("fixtures/remove_gmail.sql"),
+            concat!(include_str!("fixtures/remove_remote_drafts.sql"),include_str!("fixtures/remove_gmail.sql")),
             include_str!("fixtures/remove_sent_copy.sql")
         ),
         "DROP TABLE search_partitions; DROP TABLE keyword_rule_runs; DROP TABLE keyword_rules;"
