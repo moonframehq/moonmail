@@ -236,7 +236,7 @@ fn publish_folders(
 
 const BODY_LIMIT: u32 = 64 * 1024 * 1024;
 // The first eligible message may exceed the ordinary 8 MiB batch budget.
-fn body_batch_len(messages: &[SyncMessage]) -> usize {
+fn body_batch_len(messages: &[crate::RemoteMessage]) -> usize {
     let mut bytes = 0u64;
     messages
         .iter()
