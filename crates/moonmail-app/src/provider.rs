@@ -998,6 +998,22 @@ impl Mail {
                     Ok(())
                 })?;
             },
+            "mail_import" => {
+                let Some(Data::List(paths)) = message.get("paths") else {
+                    bail!("Choose a mail file or directory");
+                };
+                anyhow::ensure!(paths.len() == 1, "Choose one mail source");
+                let path = PathBuf::from(paths[0].as_str().context("Invalid import path")?);
+                self.launch(move |root, _| {
+                    crate::mail_import::run(
+                        &path,
+                        &mut Archive::open(&root)?,
+                        &FileBlobs::new(&root),
+                    )?;
+                    Ok(())
+                })?;
+                self.status = "Importing local mail…".into();
+            },
             "reindex" => {
                 self.archive()?.reset_index()?;
                 self.status = "Rebuilding search in bounded batches…".into();

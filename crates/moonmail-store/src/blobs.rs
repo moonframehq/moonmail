@@ -55,7 +55,7 @@ impl BlobStore for FileBlobs {
     type Error = BlobError;
 
     fn put(&self, bytes: &[u8]) -> Result<String, BlobError> {
-        let hash = digest(bytes);
+        let hash = content_digest(bytes);
         let path = self.path(&hash)?;
         let parent = path.parent().ok_or(BlobError::InvalidHash)?;
         fs::create_dir_all(parent)?;
@@ -86,14 +86,14 @@ impl BlobStore for FileBlobs {
 
     fn get(&self, hash: &str) -> Result<Vec<u8>, BlobError> {
         let bytes = fs::read(self.path(hash)?)?;
-        if digest(&bytes) != hash {
+        if content_digest(&bytes) != hash {
             return Err(BlobError::Integrity);
         }
         Ok(bytes)
     }
 }
 
-fn digest(bytes: &[u8]) -> String {
+pub fn content_digest(bytes: &[u8]) -> String {
     Sha256::digest(bytes)
         .iter()
         .map(|byte| format!("{byte:02x}"))

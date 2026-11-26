@@ -327,6 +327,8 @@ return mod {
 			{ label = "Manage folders…", msg = "folders" },
 			{ label = "Tags & keywords…", msg = "tags" },
 			{ label = "Folder-entry rules…", msg = "rules" },
+			{ label = "Import mail file…", msg = "import-file" },
+			{ label = "Import mail folder…", msg = "import-folder" },
 			{ label = "Export selected originals…", msg = "export-selected" },
 			{ label = "Archive selected", msg = { action = "archive_messages" }, to = "provider:mail", shortcut = "secondary-shift-a" },
 			{ label = "Mark unread", msg = { action = "unread" }, to = "provider:mail", shortcut = "secondary-shift-u" },
@@ -366,6 +368,8 @@ return mod {
 		elseif msg == "mailbox-chooser" or msg == "move-chooser" or msg == "copy-chooser" then
 			state.chooser_return = state.pane; state.pane = msg; state.chooser_query = ""; state.chooser_index = 1; state.chooser_generation = (state.chooser_generation or 0) + 1
 		elseif msg == "chooser-cancel" then state.pane = state.chooser_return or "mail"
+		elseif msg == "import-file" or msg == "import-folder" then
+			return state, { { to = "app:pick", msg = { kind = if msg == "import-folder" then "folder" else "open", prompt = if msg == "import-folder" then "Import Maildir or message folder" else "Import mbox or EML file", reply = { action = "mail_import" } } } }
 		elseif msg == "export-selected" then state.pane = "export"
 		elseif msg == "tags" then state.pane = "tags"
 		elseif msg == "rules" then state.pane = "rules"

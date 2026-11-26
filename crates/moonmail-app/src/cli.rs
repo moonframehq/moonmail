@@ -1,8 +1,8 @@
 use {
     anyhow::{Context, Result, bail},
-    moonmail_core::{BlobStore, MailQuery, MailRepository},
+    moonmail_core::{MailQuery, MailRepository},
     moonmail_network::{Account, Auth, Keychain},
-    moonmail_store::{Archive, FileBlobs, IncomingMessage},
+    moonmail_store::{Archive, FileBlobs},
     std::path::Path,
 };
 
@@ -105,15 +105,12 @@ pub fn dispatch(root: &Path, args: &[String]) -> Result<bool> {
             println!("Search projection rebuilt.");
         },
         "import" => {
-            let path = Path::new(
-                args.get(1)
-                    .context("Usage: moonmail import PATH (an .eml file or directory)")?,
-            );
+            let path = Path::new(args.get(1).context(
+                "Usage: moonmail import PATH (Maildir, mboxrd, .eml file or directory)",
+            )?);
             let mut archive = Archive::open(root)?;
             let blobs = FileBlobs::new(root);
-            let mailbox = archive.mailbox("local", "Imported")?;
-            let mut count = 0;
-            import(path, &mut archive, &blobs, mailbox, &mut count)?;
+            let count = crate::mail_import::run(path, &mut archive, &blobs)?;
             crate::local::index_all(root)?;
             println!("Imported {count} messages.");
         },
@@ -194,7 +191,7 @@ pub fn dispatch(root: &Path, args: &[String]) -> Result<bool> {
             println!("Demo archive, search journal, pagination, reader and Correspondence passed.");
         },
         "--help" | "help" => println!(
-            "Moonmail\n\n  (no arguments)                Open the mail client\n  login EMAIL [PROVIDER]         Browser OAuth + PKCE; provider inferred from domain\n  password EMAIL [PROVIDER]      Verify IMAP/SMTP and store an app password\n  connect ACCOUNT.json           Connect custom IMAP/SMTP using a hidden password prompt\n  oauth-client PROVIDER FILE     Import Google/Microsoft desktop client JSON into Keychain\n  sync                          Sync all accounts and finish pending Sent copies\n  import PATH                   Import .eml files recursively\n  export ID PATH                Save original bytes as a new .eml file\n  export-many DIR IDs            Export up to 100 originals into a new folder\n  reindex                       Replay the search journal\n  status                        Show local archive counts\n  disconnect [EMAIL]            Disconnect one account; retain local mail\n  --check                       Isolated Moonframe UI validation\n\nProviders: fastmail, google, microsoft, icloud, yahoo, aol, other.\nGoogle/Microsoft browser login requires an imported desktop OAuth client.\nMOONMAIL_DATA_DIR overrides the archive directory. MOONMAIL_DEMO=1 selects synthetic demo mail."
+            "Moonmail\n\n  (no arguments)                Open the mail client\n  login EMAIL [PROVIDER]         Browser OAuth + PKCE; provider inferred from domain\n  password EMAIL [PROVIDER]      Verify IMAP/SMTP and store an app password\n  connect ACCOUNT.json           Connect custom IMAP/SMTP using a hidden password prompt\n  oauth-client PROVIDER FILE     Import Google/Microsoft desktop client JSON into Keychain\n  sync                          Sync all accounts and finish pending Sent copies\n  import PATH                   Read Maildir, mboxrd, or .eml files\n  export ID PATH                Save original bytes as a new .eml file\n  export-many DIR IDs            Export up to 100 originals into a new folder\n  reindex                       Replay the search journal\n  status                        Show local archive counts\n  disconnect [EMAIL]            Disconnect one account; retain local mail\n  --check                       Isolated Moonframe UI validation\n\nProviders: fastmail, google, microsoft, icloud, yahoo, aol, other.\nGoogle/Microsoft browser login requires an imported desktop OAuth client.\nMOONMAIL_DATA_DIR overrides the archive directory. MOONMAIL_DEMO=1 selects synthetic demo mail."
         ),
         value if value.starts_with('-') || matches!(value, "bundle" | "mockup" | "mockups") => {
             return Ok(false);
@@ -202,49 +199,4 @@ pub fn dispatch(root: &Path, args: &[String]) -> Result<bool> {
         _ => bail!("Unknown command {command}; use --help"),
     }
     Ok(true)
-}
-
-fn import(
-    path: &Path,
-    archive: &mut Archive,
-    blobs: &FileBlobs,
-    mailbox: i64,
-    count: &mut usize,
-) -> Result<()> {
-    if path.is_symlink() {
-        return Ok(());
-    }
-    if path.is_dir() {
-        for entry in std::fs::read_dir(path)? {
-            import(&entry?.path(), archive, blobs, mailbox, count)?;
-        }
-    } else if path
-        .extension()
-        .is_some_and(|extension| extension.eq_ignore_ascii_case("eml"))
-    {
-        anyhow::ensure!(
-            path.metadata()?.len() <= 64 * 1024 * 1024,
-            "Message exceeds 64 MiB: {}",
-            path.display()
-        );
-        let raw = std::fs::read(path)?;
-        let hash = blobs.put(&raw)?;
-        archive.ingest(
-            &moonmail_mime::StalwartParser::default(),
-            blobs,
-            IncomingMessage {
-                account: "local",
-                mailbox,
-                origin: &format!("import:{hash}"),
-                epoch: 0,
-                uid: None,
-                seen: true,
-                starred: false,
-                received_at: 0,
-                raw: &raw,
-            },
-        )?;
-        *count += 1;
-    }
-    Ok(())
 }

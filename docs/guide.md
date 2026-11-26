@@ -513,11 +513,23 @@ Set `MOONMAIL_DATA_DIR` to override the archive path. One process owns each arch
 close the GUI before using CLI commands against the same archive.
 
 ```sh
+just import /path/to/Maildir
+just import /path/to/mailbox.mbox
 just import /path/to/eml-directory  # recursively read .eml; source files stay untouched
 just run status
 just reindex
 MOONMAIL_DATA_DIR=/path/to/archive just run
 ```
+
+Use **Mail → Import mail file…** for an EML or mboxrd file, or **Import mail folder…**
+for a Maildir or a directory containing EML files. The import runs in the background.
+Maildir imports messages from `cur` and `new`, including extensionless files,
+reads the seen and flagged filename bits, and maps Maildir++ subfolders beneath
+Imported. Temporary deliveries and symlinks are skipped. mboxrd imports stream one
+message at a time and decode quoted From lines. Each message is limited to 64 MiB.
+Import copies mail into the local archive. Reimport to pick up additions. Identical
+bytes share a local message, and Maildir flags are refreshed on reimport. Removing
+mail from the source leaves previously imported messages available.
 
 - `archive.sqlite3`: authoritative metadata, bodies, flags, drafts, outbox, journal.
 - `messages/<prefix>/<sha256>.eml`: immutable original bytes, verified on read.

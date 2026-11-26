@@ -6,6 +6,7 @@ mod file_export;
 mod fonts;
 mod layout;
 mod local;
+mod mail_import;
 mod navigation;
 mod page;
 mod provider;

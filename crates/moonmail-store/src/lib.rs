@@ -28,7 +28,7 @@ mod thread_graph;
 
 pub use {
     archive::{Archive, IncomingMessage, IndexWork},
-    blobs::{BlobError, FileBlobs},
+    blobs::{BlobError, FileBlobs, content_digest},
     correspondents::Correspondent,
     demo::seed_demo,
     drafts::{
