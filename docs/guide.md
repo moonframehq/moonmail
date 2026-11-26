@@ -281,7 +281,8 @@ its credentials/settings. The offline demo never connects.
 Select **Google · Gmail**, then **Use app password…** if your Google account offers
 app passwords (normally requires 2-Step Verification and may be restricted by your
 organization). The native secure-entry dialog keeps the password out of UI state.
-For browser sign-in:
+If your build supplies a registered Google desktop client, choose **Sign in with Google**.
+For browser sign-in using your own client:
 
 1. Create your own Google Cloud OAuth client with application type **Desktop app**.
    Configure the consent screen and allow the Gmail scope `https://mail.google.com/`.
@@ -289,8 +290,9 @@ For browser sign-in:
 2. Download its client JSON and choose **Import OAuth client…** in Moonmail.
 3. Choose **Sign in with Google**, authorize the same email address, then **Sync**.
 
-Client configuration and tokens are stored in Keychain. No shared Google client is
-bundled. Google's testing-mode grants can expire after seven days; broader
+Client configuration and tokens are stored in Keychain. Packagers can include their Google Desktop app JSON at
+`Moonmail.app/Contents/Resources/google-desktop-client.json` before signing.
+A Keychain import takes precedence. The source checkout includes no registration. Google's testing-mode grants can expire after seven days; broader
 distribution of this restricted mail scope requires Google's verification process.
 See [Google desktop OAuth](https://developers.google.com/identity/protocols/oauth2/native-app)
 and [Gmail XOAUTH2](https://developers.google.com/workspace/gmail/imap/xoauth2-protocol).

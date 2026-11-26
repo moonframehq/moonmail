@@ -67,7 +67,7 @@ return component {
 						ui.row { align = "center", badge(selected.icon, selected.color), ui.text { selected.name, weight = "semibold", size = "large" } },
 						ui.text { if selected.id == "google" then "Read and reply through Gmail’s IMAP and SMTP services. Labels appear as mailboxes; All Mail is your archive." elseif selected.id == "microsoft" then "For accounts with IMAP and SMTP AUTH enabled. Uses delegated browser sign-in, not Exchange/EWS." elseif selected.id == "other" then "Enter your server settings below. Moonmail verifies IMAP and SMTP before connecting." else "Use browser sign-in where available, or enter an app password in a native secure dialog. Both mail services are checked before connecting.", tone = "muted", size = "small" },
 						if selected.client then ui.column { gap = "small",
-							ui.text { "Browser sign-in needs a registered desktop OAuth client. Import it once for this Mac.", tone = "muted", size = "small" },
+							ui.text { if selected.id == "google" then "Use Sign in with Google if your build includes a desktop client, or import your own." else "Import a registered desktop OAuth client once for this Mac.", tone = "muted", size = "small" },
 							ui.row { ui.button { label = "Import OAuth client…", small = true, msg = "import-oauth-client", to = "settings", disabled = busy or mail.demo } },
 						} else nil,
 						ui.row { gap = "small", justify = "end",
