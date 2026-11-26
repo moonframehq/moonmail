@@ -108,6 +108,7 @@ pub struct Mail {
     job: Option<Receiver<Event>>,
     workers: sync::Workers,
     maildir: Option<crate::live_maildir::Worker>,
+    msgvault: Option<crate::msgvault::Worker>,
     status: String,
     error: String,
     html_url: String,
@@ -169,6 +170,7 @@ impl Mail {
             job: None,
             workers: sync::Workers::default(),
             maildir: None,
+            msgvault: None,
             status: "Local mail, at your pace".into(),
             error: String::new(),
             html_url: String::new(),
@@ -357,6 +359,7 @@ impl Mail {
             "font_families":self.font_families,"font_preview_url":self.font_preview_url,
             "discovery":self.discovery,"discovering":self.discovery_job.is_some(),"discovery_error":self.discovery_error,
         });
+        snapshot["account"] = json!(self.query.account);
         snapshot["outbox_more"] = json!(outbox.next.is_some());
         self.sender_snapshot(&mut snapshot)?;
         if let Some(rows) = snapshot["drafts"]["rows"].as_array_mut() {
@@ -786,6 +789,26 @@ impl Mail {
                     .get("id")
                     .and_then(Data::as_i64)
                     .filter(|id| *id > 0);
+                self.query.account = None;
+                self.refresh()?;
+            },
+            "account" => {
+                let account = text("account");
+                anyhow::ensure!(
+                    self.archive()?
+                        .mailboxes()?
+                        .iter()
+                        .any(|folder| folder.account == account),
+                    "This account is no longer available"
+                );
+                self.active_saved_search = None;
+                self.saved_predicate = None;
+                self.query.before = None;
+                self.query.filter = ViewFilter::All;
+                self.expanded.clear();
+                self.search.clear();
+                self.query.mailbox = None;
+                self.query.account = Some(account);
                 self.refresh()?;
             },
             "filter" => {
@@ -1099,6 +1122,9 @@ impl Mail {
         if self.maildir.is_none() && !self.archive()?.maildir_accounts()?.is_empty() {
             self.maildir = Some(crate::live_maildir::Worker::start(self.root.clone())?);
         }
+        if self.msgvault.is_none() && !self.archive()?.msgvault_accounts()?.is_empty() {
+            self.msgvault = Some(crate::msgvault::Worker::start(self.root.clone())?);
+        }
         Ok(())
     }
 
@@ -1224,6 +1250,26 @@ impl Native for Mail {
                     },
                     Err(error) => {
                         self.status = "Retrying live Maildir".into();
+                        self.error = error;
+                    },
+                }
+            }
+        }
+        if let Some(worker) = &self.msgvault {
+            for event in worker.events.try_iter() {
+                changed = true;
+                maildir_changed = true;
+                self.prepared_search = None;
+                match event {
+                    crate::msgvault::Event::Progress(status) => self.status = status,
+                    crate::msgvault::Event::Updated => {
+                        if self.status == "Retrying msgvault" {
+                            self.error.clear();
+                        }
+                        self.status = "msgvault mirrored".into();
+                    },
+                    crate::msgvault::Event::Failed(error) => {
+                        self.status = "Retrying msgvault".into();
                         self.error = error;
                     },
                 }

@@ -63,6 +63,10 @@ impl MailRepository for Archive {
             );
             arguments.push(mailbox.into());
         }
+        if let Some(account) = &query.account {
+            clauses.push("m.account=?".into());
+            arguments.push(account.clone().into());
+        }
         match query.filter {
             ViewFilter::Unread => clauses.push(
                 "EXISTS(SELECT 1 FROM occurrences o WHERE o.message_id=m.id AND seen=0)".into(),

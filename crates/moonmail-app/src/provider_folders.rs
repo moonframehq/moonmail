@@ -110,6 +110,15 @@ impl Mail {
                 {
                     self.query.mailbox = None;
                 }
+                if let Some(account) = &self.query.account
+                    && !self
+                        .archive()?
+                        .mailboxes()?
+                        .iter()
+                        .any(|folder| &folder.account == account)
+                {
+                    self.query.account = None;
+                }
                 self.query.before = None;
                 self.expanded.clear();
                 self.checked.clear();

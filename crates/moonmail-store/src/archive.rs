@@ -55,7 +55,7 @@ impl Archive {
             transaction.pragma_query_value(None, "user_version", |row| row.get(0))?;
         match version {
             0 => transaction.execute_batch(include_str!("schema.sql"))?,
-            1..=25 => {},
+            1..=26 => {},
             version => return Err(Error::Schema(version)),
         }
         if version < 2 {
@@ -147,6 +147,9 @@ impl Archive {
         }
         if version < 25 {
             transaction.execute_batch(include_str!("maildir.sql"))?;
+        }
+        if version < 26 {
+            transaction.execute_batch(include_str!("msgvault.sql"))?;
         }
         transaction.commit()?;
         connection.execute_batch(

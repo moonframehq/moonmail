@@ -8,6 +8,7 @@ mod layout;
 mod live_maildir;
 mod local;
 mod mail_import;
+mod msgvault;
 mod navigation;
 mod page;
 mod provider;
@@ -86,6 +87,22 @@ fn run() -> Result<ExitCode> {
     archive.recover_interrupted_moves()?;
     archive.recover_interrupted_folders()?;
     drop(archive);
+    let first = args.first().map(String::as_str);
+    if !check
+        && !packaging
+        && std::env::var_os("MOONMAIL_DEMO").is_none()
+        && first.is_none_or(|arg| arg == "msgvault" || arg.starts_with('-'))
+        && let Some(database) = msgvault::locate()
+    {
+        match msgvault::detect(&root, &database) {
+            Ok(added) => {
+                for account in added {
+                    eprintln!("Moonmail: connected {account} from {}", database.display());
+                }
+            },
+            Err(error) => eprintln!("Moonmail: msgvault was not connected: {error:#}"),
+        }
+    }
     if cli::dispatch(&root, &args)? {
         return Ok(ExitCode::SUCCESS);
     }

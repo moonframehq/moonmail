@@ -103,6 +103,18 @@ pub fn dispatch(root: &Path, args: &[String]) -> Result<bool> {
             moonmail_network::sync_account(root, |status| println!("{status}"))?;
             crate::local::index_all(root)?;
         },
+        "msgvault" => {
+            let mut archive = Archive::open(root)?;
+            anyhow::ensure!(
+                !archive.msgvault_accounts()?.is_empty(),
+                "No msgvault archive found in $MSGVAULT_HOME or ~/.msgvault"
+            );
+            let changed = crate::msgvault::sync(root, &mut archive, |account, count| {
+                eprintln!("{account}: {count} messages mirrored…");
+            })?;
+            crate::local::index_all(root)?;
+            println!("msgvault mirrored; {changed} messages added or updated.");
+        },
         "reindex" => {
             Archive::open(root)?.reset_index()?;
             crate::local::index_all(root)?;
@@ -194,7 +206,7 @@ pub fn dispatch(root: &Path, args: &[String]) -> Result<bool> {
             println!("Demo archive, search journal, pagination, reader and Correspondence passed.");
         },
         "--help" | "help" => println!(
-            "Moonmail\n\n  (no arguments)                Open the mail client\n  login EMAIL [PROVIDER]         Browser OAuth + PKCE; provider inferred from domain\n  password EMAIL [PROVIDER]      Verify IMAP/SMTP and store an app password\n  connect ACCOUNT.json           Connect custom IMAP/SMTP using a hidden password prompt\n  oauth-client PROVIDER FILE     Import Google/Microsoft desktop client JSON into Keychain\n  sync                          Sync all accounts and finish pending Sent copies\n  import PATH                   Read Maildir, mboxrd, or .eml files\n  export ID PATH                Save original bytes as a new .eml file\n  export-many DIR IDs            Export up to 100 originals into a new folder\n  reindex                       Replay the search journal\n  status                        Show local archive counts\n  disconnect [EMAIL]            Disconnect one account; retain local mail\n  --check                       Isolated Moonframe UI validation\n\nProviders: fastmail, google, microsoft, icloud, yahoo, aol, other.\nGoogle browser login uses an imported or packaged desktop OAuth client. Microsoft requires an imported client.\nMOONMAIL_DATA_DIR overrides the archive directory. MOONMAIL_DEMO=1 selects synthetic demo mail."
+            "Moonmail\n\n  (no arguments)                Open the mail client\n  login EMAIL [PROVIDER]         Browser OAuth + PKCE; provider inferred from domain\n  password EMAIL [PROVIDER]      Verify IMAP/SMTP and store an app password\n  connect ACCOUNT.json           Connect custom IMAP/SMTP using a hidden password prompt\n  oauth-client PROVIDER FILE     Import Google/Microsoft desktop client JSON into Keychain\n  sync                          Sync all accounts and finish pending Sent copies\n  import PATH                   Read Maildir, mboxrd, or .eml files\n  msgvault                      Mirror the detected msgvault archive now\n  export ID PATH                Save original bytes as a new .eml file\n  export-many DIR IDs            Export up to 100 originals into a new folder\n  reindex                       Replay the search journal\n  status                        Show local archive counts\n  disconnect [EMAIL]            Disconnect one account; retain local mail\n  --check                       Isolated Moonframe UI validation\n\nProviders: fastmail, google, microsoft, icloud, yahoo, aol, other.\nGoogle browser login uses an imported or packaged desktop OAuth client. Microsoft requires an imported client.\nmsgvault is found through $MSGVAULT_HOME or ~/.msgvault and mirrored read-only; MOONMAIL_MSGVAULT=0 turns detection off.\nMOONMAIL_DATA_DIR overrides the archive directory. MOONMAIL_DEMO=1 selects synthetic demo mail."
         ),
         value if value.starts_with('-') || matches!(value, "bundle" | "mockup" | "mockups") => {
             return Ok(false);

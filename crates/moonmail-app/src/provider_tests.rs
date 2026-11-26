@@ -1186,3 +1186,49 @@ fn connect_live_maildir_from_picker_and_resume_on_launch() -> Result<()> {
     assert!(mail.archive()?.detail(id)?.summary.starred);
     Ok(())
 }
+
+#[test]
+fn an_account_root_shows_only_that_accounts_mail() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let mut mail = Mail::new(dir.path().to_owned(), true);
+    let mut archive = Archive::open(dir.path())?;
+    let blobs = FileBlobs::new(dir.path());
+    moonmail_store::seed_demo(&mut archive, &blobs)?;
+    let raw = b"From: a@example.test\r\nSubject: Mirrored only\r\n\r\nbody";
+    for account in ["msgvault you@example.com", "you@example.com"] {
+        let mailbox = archive.mailbox(account, "INBOX")?;
+        archive.ingest(
+            &moonmail_mime::StalwartParser::default(),
+            &blobs,
+            moonmail_store::IncomingMessage {
+                account,
+                mailbox,
+                origin: "duplicate",
+                epoch: 0,
+                uid: None,
+                seen: false,
+                starred: false,
+                received_at: 0,
+                raw,
+            },
+        )?;
+    }
+    mail.index = Some(crate::local::open_index(dir.path(), &archive)?);
+    mail.archive = Some(archive);
+    mail.handle(data(
+        json!({"action":"account","account":"msgvault you@example.com"}),
+    ))?;
+    assert_eq!(mail.snapshot()?["account"], "msgvault you@example.com");
+    assert_eq!(mail.page.rows.len(), 1);
+    assert_eq!(mail.page.rows[0].subject, "Mirrored only");
+    mail.handle(data(json!({"action":"folder","id":0})))?;
+    assert!(mail.snapshot()?["account"].is_null());
+    assert!(mail.page.rows.len() > 1);
+    assert!(
+        mail.handle(data(
+            json!({"action":"account","account":"gone@example.test"})
+        ))
+        .is_err()
+    );
+    Ok(())
+}

@@ -29,6 +29,7 @@ impl Mail {
         self.search = source;
         if reset_scope {
             self.query.mailbox = None;
+            self.query.account = None;
             self.query.filter = ViewFilter::All;
         }
         self.query.before = None;

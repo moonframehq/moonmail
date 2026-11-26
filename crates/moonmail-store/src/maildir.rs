@@ -36,7 +36,7 @@ pub(crate) fn check_folder_editable(db: &rusqlite::Connection, account: &str) ->
             "Use Mutt or mbsync for Maildir moves, copies and folder edits",
         ));
     }
-    Ok(())
+    crate::msgvault::check_editable(db, account)
 }
 
 impl Archive {
