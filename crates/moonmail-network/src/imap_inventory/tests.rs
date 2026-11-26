@@ -245,3 +245,42 @@ fn partial_gmail_metadata_cannot_complete_an_inventory() {
         Err(Error::Invalid("Missing X-GM-LABELS"))
     ));
 }
+
+#[test]
+fn gmail_delta_refreshes_labels_without_fetching_the_body() -> Result<(), Box<dyn std::error::Error>>
+{
+    let base = SyncCheckpoint {
+        epoch: 7,
+        upper: 2,
+        highest_modseq: 5,
+    };
+    let mut imap = scripted(vec![
+        selected(7, 3, "HIGHESTMODSEQ 6"),
+        ("UID FETCH 1:2 (UID FLAGS) (CHANGEDSINCE 5)", "* 1 FETCH (UID 2 FLAGS () MODSEQ (6))\r\n$TAG OK changes\r\n".into()),
+        ("UID FETCH 2 (UID FLAGS RFC822.SIZE INTERNALDATE X-GM-MSGID X-GM-THRID X-GM-LABELS)", "* 1 FETCH (UID 2 FLAGS () RFC822.SIZE 120 INTERNALDATE \"21-Nov-1997 09:55:06 -0600\" X-GM-MSGID 100 X-GM-THRID 99 X-GM-LABELS (Work))\r\n$TAG OK metadata\r\n".into()),
+        ("UID SEARCH ALL", "* SEARCH 2\r\n$TAG OK ids\r\n".into()),
+    ])?;
+    let mut labels = Vec::new();
+    changes(
+        &mut imap,
+        "INBOX",
+        true,
+        false,
+        true,
+        Some(base),
+        |_, _, batch| {
+            if let InventoryBatch::Metadata([message]) = batch {
+                labels.clone_from(
+                    &message
+                        .gmail
+                        .as_ref()
+                        .ok_or_else(|| io::Error::other("missing labels"))?
+                        .labels,
+                );
+            }
+            Ok::<_, io::Error>(())
+        },
+    )?;
+    assert_eq!(labels, ["Work"]);
+    Ok(())
+}
