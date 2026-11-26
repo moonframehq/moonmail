@@ -245,3 +245,128 @@ fn two_account_round_trip() -> Result {
     );
     Ok(())
 }
+
+/// Run with just bench-jmap. All fixture creation and verification are untimed.
+#[test]
+#[ignore = "requires an empty loopback Stalwart fixture"]
+fn sync_performance() -> Result {
+    use {
+        moonmail_network::ExposeSecret,
+        serde_json::{Map, json},
+    };
+    const COUNT: usize = 96;
+    const RUNS: usize = 5;
+    let session = std::env::var("MOONMAIL_STALWART_URL")?;
+    assert_eq!(url::Url::parse(&session)?.host_str(), Some("127.0.0.1"));
+    let token = SecretString::from(std::env::var("MOONMAIL_STALWART_BOB_TOKEN")?);
+    let http = reqwest::blocking::Client::new();
+    let info: Value = http
+        .get(&session)
+        .bearer_auth(token.expose_secret())
+        .send()?
+        .error_for_status()?
+        .json()?;
+    let api = url::Url::parse(&session)?.join(info["apiUrl"].as_str().ok_or("Missing API URL")?)?;
+    assert_eq!(api.origin(), url::Url::parse(&session)?.origin());
+    let client = peer(&session, "MOONMAIL_STALWART_BOB_TOKEN", BOB)?;
+    let call = |name: &str, mut args: Value| -> Result<Value> {
+        args["accountId"] = json!(client.account_id());
+        let reply: Value = http
+            .post(api.clone())
+            .bearer_auth(token.expose_secret())
+            .json(&json!({
+                "using":["urn:ietf:params:jmap:core","urn:ietf:params:jmap:mail"],
+                "methodCalls":[[name,args,"a"]]
+            }))
+            .send()?
+            .error_for_status()?
+            .json()?;
+        assert_eq!(reply["methodResponses"][0][0], name);
+        Ok(reply["methodResponses"][0][1].clone())
+    };
+    let folders = call("Mailbox/get", json!({}))?;
+    let inbox = folders["list"]
+        .as_array()
+        .ok_or("Missing folders")?
+        .iter()
+        .find(|f| f["role"] == "inbox")
+        .and_then(|f| f["id"].as_str())
+        .ok_or("Missing inbox")?;
+    let mut create = Map::new();
+    for n in 0..COUNT {
+        create.insert(
+            n.to_string(),
+            json!({
+                "mailboxIds":{inbox:true}, "subject":format!("Synthetic {n}"),
+                "from":[{"email":ALICE}],"to":[{"email":BOB}],
+                "textBody":[{"partId":"1","type":"text/plain"}],
+                "bodyValues":{"1":{"value":format!("Fixture message {n}")}}
+            }),
+        );
+    }
+    let created = call("Email/set", json!({"create":create}))?;
+    let remote = created["created"]
+        .as_object()
+        .ok_or("No created messages")?
+        .values()
+        .map(|v| v["id"].as_str().ok_or("Missing created ID"))
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    assert_eq!(remote.len(), COUNT);
+    let mut cold = Vec::new();
+    let mut delta = Vec::new();
+    let mut write = Vec::new();
+    let mut idle = Vec::new();
+    for run in 0..RUNS {
+        let root = tempfile::tempdir()?;
+        let witness_root = tempfile::tempdir()?;
+        let blobs = FileBlobs::new(root.path());
+        let witness_blobs = FileBlobs::new(witness_root.path());
+        let mut db = Archive::open(root.path())?;
+        let mut witness = Archive::open(witness_root.path())?;
+        let start = Instant::now();
+        sync(&client, BOB, &mut db, &blobs)?;
+        cold.push(start.elapsed());
+        assert_eq!(db.total()?, COUNT as u64);
+        sync(&client, BOB, &mut witness, &witness_blobs)?;
+        let ids = remote
+            .iter()
+            .map(|key| {
+                db.jmap_message(BOB, key)?
+                    .ok_or(moonmail_store::Error::Invalid("Missing fixture"))
+            })
+            .collect::<moonmail_store::Result<Vec<_>>>()?;
+        let enabled = run % 2 == 0;
+        db.set_flags(&ids, "flagged", enabled)?;
+        let start = Instant::now();
+        sync(&client, BOB, &mut db, &blobs)?;
+        write.push(start.elapsed());
+        assert!(db.pending_flags(BOB)?.is_empty());
+        let start = Instant::now();
+        sync(&client, BOB, &mut witness, &witness_blobs)?;
+        delta.push(start.elapsed());
+        for key in &remote {
+            let id = witness
+                .jmap_message(BOB, key)?
+                .ok_or("Missing witness record")?;
+            assert_eq!(witness.detail(id)?.summary.starred, enabled);
+        }
+        let start = Instant::now();
+        for _ in 0..20 {
+            sync(&client, BOB, &mut db, &blobs)?;
+        }
+        idle.push(start.elapsed() / 20);
+    }
+    for (name, mut samples) in [
+        ("cold", cold),
+        ("write", write),
+        ("delta", delta),
+        ("idle", idle),
+    ] {
+        samples.sort();
+        println!(
+            "{name}: {:.2} ms median ({COUNT} messages, {RUNS} runs)",
+            samples[RUNS / 2].as_secs_f64() * 1000.0
+        );
+    }
+    Ok(())
+}

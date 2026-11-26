@@ -103,3 +103,6 @@ test-mail-docker: test-mail-image
 # Disposable Stalwart with two synthetic OAuth accounts on loopback.
 test-stalwart:
     python3 scripts/test_stalwart.py
+
+bench-jmap:
+    python3 scripts/test_stalwart.py --benchmark

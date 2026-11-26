@@ -88,7 +88,7 @@ fn session(base: &str) -> Reply {
     json(json!({
         "apiUrl":format!("{base}/api"),"downloadUrl":format!("{base}/download/{{accountId}}/{{blobId}}/{{name}}"),
         "uploadUrl":format!("{base}/upload/{{accountId}}"),"eventSourceUrl":format!("{base}/events?types={{types}}&closeafter={{closeafter}}"),
-        "primaryAccounts":{"urn:ietf:params:jmap:mail":"account"},"capabilities":{"urn:ietf:params:jmap:core":{"maxObjectsInGet":2}}
+        "primaryAccounts":{"urn:ietf:params:jmap:mail":"account"},"capabilities":{"urn:ietf:params:jmap:core":{"maxObjectsInGet":2,"maxObjectsInSet":2,"maxConcurrentRequests":2}}
     }))
 }
 fn response(call: &Value, mut data: Value) -> Value {
@@ -107,6 +107,22 @@ fn email(folder: &str) -> Value {
 }
 fn folders() -> Value {
     json!({"state":"f","list":[{"id":"in","name":"Inbox","role":"inbox"},{"id":"sent","name":"Sent","role":"sent"},{"id":"drafts","name":"Drafts","role":"drafts"}]})
+}
+fn page(request: &Request, position: usize, ids: &[&str], records: Vec<Value>) -> Reply {
+    let body = request.json();
+    let calls = body["methodCalls"].as_array().unwrap();
+    assert_eq!(calls.len(), 2);
+    assert_eq!(calls[0][0], "Email/query");
+    assert_eq!(calls[0][1]["position"], position);
+    assert_eq!(calls[1][0], "Email/get");
+    assert_eq!(
+        calls[1][1]["#ids"],
+        json!({"resultOf":calls[0][2],"name":"Email/query","path":"/ids"})
+    );
+    json(json!({"methodResponses":[
+        response(&calls[0],json!({"queryState":"q","position":position,"ids":ids})),
+        response(&calls[1],json!({"list":records,"notFound":[]}))
+    ]}))
 }
 fn delta(
     request: &Request,
@@ -128,37 +144,25 @@ fn delta(
 }
 #[test]
 fn initial_incremental_and_destroy_survive_reopen() -> Result {
-    let (url, worker) = server(11, |n, base, r| match n {
+    let (url, worker) = server(10, |n, base, r| match n {
         0 => session(base),
         1 => method(&r, "Mailbox/get", folders()),
         2 => method(&r, "Email/get", json!({"state":"s1","list":[]})),
-        3 => method(
-            &r,
-            "Email/query",
-            json!({"queryState":"query","position":0,"ids":["message"]}),
-        ),
-        4 => method(&r, "Email/get", json!({"list":[email("in")],"notFound":[]})),
-        5 => {
+        3 => page(&r, 0, &["message"], vec![email("in")]),
+        4 => {
             assert_eq!(r.path, "/download/account/blob/message.eml");
             Reply(200, MIME.into())
         },
-        6 => {
-            assert_eq!(r.json()["methodCalls"][0][1]["position"], 1);
-            method(
-                &r,
-                "Email/query",
-                json!({"queryState":"query","position":1,"ids":[]}),
-            )
-        },
-        7 => delta(&r, "s1", "s1", vec![], vec![]),
-        8 => {
+        5 => page(&r, 1, &[], vec![]),
+        6 => delta(&r, "s1", "s1", vec![], vec![]),
+        7 => {
             assert_eq!(
                 r.json()["methodCalls"][0][1]["update"]["message"]["keywords/$seen"],
                 true
             );
             method(&r, "Email/set", json!({"updated":{"message":null}}))
         },
-        9 => delta(&r, "s1", "s2", vec![email("sent")], vec![]),
+        8 => delta(&r, "s1", "s2", vec![email("sent")], vec![]),
         _ => delta(&r, "s2", "s3", vec![], vec!["message"]),
     });
     let client = Client::discover(&url, "fixture".into())?;
@@ -291,16 +295,11 @@ fn token_expiry_and_failed_writes_are_visible() -> Result {
 
 #[test]
 fn missing_blob_leaves_checkpoint_replayable() -> Result {
-    let (url, worker) = server(6, |n, base, r| match n {
+    let (url, worker) = server(5, |n, base, r| match n {
         0 => session(base),
         1 => method(&r, "Mailbox/get", folders()),
         2 => method(&r, "Email/get", json!({"state":"initial"})),
-        3 => method(
-            &r,
-            "Email/query",
-            json!({"queryState":"query","position":0,"ids":["message"]}),
-        ),
-        4 => method(&r, "Email/get", json!({"list":[email("in")],"notFound":[]})),
+        3 => page(&r, 0, &["message"], vec![email("in")]),
         _ => Reply(200, b"truncated".into()),
     });
     let dir = tempfile::tempdir()?;
@@ -414,11 +413,7 @@ fn expired_state_recovers_with_new_baseline() -> Result {
         },
         2 => method(&r, "Mailbox/get", folders()),
         3 => method(&r, "Email/get", json!({"state":"recovered"})),
-        4 => method(
-            &r,
-            "Email/query",
-            json!({"queryState":"q","position":0,"ids":[]}),
-        ),
+        4 => page(&r, 0, &[], vec![]),
         _ => delta(&r, "recovered", "recovered", vec![], vec![]),
     });
     let dir = tempfile::tempdir()?;
@@ -438,6 +433,148 @@ fn expired_state_recovers_with_new_baseline() -> Result {
         archive.jmap_states(ACCOUNT)?.1.as_deref(),
         Some("recovered")
     );
+    worker.join().unwrap();
+    Ok(())
+}
+
+#[test]
+fn flag_batches_preserve_concurrent_edits_and_partial_rejections() -> Result {
+    use {
+        moonmail_mime::StalwartParser,
+        moonmail_store::{IncomingMessage, JmapFolder},
+    };
+    let dir = tempfile::tempdir()?;
+    let root = dir.path().to_owned();
+    let blobs = FileBlobs::new(&root);
+    let mut archive = Archive::open(&root)?;
+    archive.bind_jmap(ACCOUNT, "account")?;
+    archive.jmap_folders(
+        ACCOUNT,
+        &[JmapFolder {
+            remote: "in".into(),
+            path: "Inbox".into(),
+            role: Some(MailboxRole::Inbox),
+        }],
+        "f",
+    )?;
+    archive.checkpoint_jmap(ACCOUNT, "s", None, &[], false)?;
+    let mailbox = archive.role_mailbox(ACCOUNT, MailboxRole::Inbox)?;
+    let mut ids = Vec::new();
+    for remote in ["one", "two", "three", "four"] {
+        let uid = archive.jmap_uid(ACCOUNT, remote)?;
+        ids.push(archive.ingest(
+            &StalwartParser::default(),
+            &blobs,
+            IncomingMessage {
+                account: ACCOUNT,
+                mailbox,
+                origin: &format!("jmap:{remote}"),
+                epoch: 0,
+                uid: Some(uid),
+                seen: false,
+                starred: false,
+                received_at: 1,
+                raw: MIME,
+            },
+        )?);
+    }
+    archive.set_flags(&ids, "seen", true)?;
+    let revised = ids[0];
+    let (url, worker) = server(5, move |n, base, r| match n {
+        0 => session(base),
+        1 => {
+            assert_eq!(
+                r.json()["methodCalls"][0][1]["update"],
+                json!({"one":{"keywords/$seen":true},"two":{"keywords/$seen":true}})
+            );
+            Archive::open(&root)
+                .unwrap()
+                .set_flag(revised, "seen", false)
+                .unwrap();
+            method(&r, "Email/set", json!({"updated":{"one":null,"two":null}}))
+        },
+        2 => {
+            assert_eq!(
+                r.json()["methodCalls"][0][1]["update"],
+                json!({"three":{"keywords/$seen":true},"four":{"keywords/$seen":true}})
+            );
+            method(
+                &r,
+                "Email/set",
+                json!({"notUpdated":{"three":{"type":"notFound"},"four":{"type":"forbidden"}}}),
+            )
+        },
+        3 => {
+            assert_eq!(
+                r.json()["methodCalls"][0][1]["update"],
+                json!({"one":{"keywords/$seen":null},"four":{"keywords/$seen":true}})
+            );
+            method(&r, "Email/set", json!({"updated":{"one":null,"four":null}}))
+        },
+        _ => delta(&r, "s", "s", vec![], vec![]),
+    });
+    let client = Client::discover(&url, "fixture".into())?;
+    assert!(matches!(
+        client.sync(ACCOUNT, &mut archive, &blobs, |_| {}, || false),
+        Err(moonmail_network::Error::Jmap(JmapError::Rejected))
+    ));
+    drop(archive);
+    let mut archive = Archive::open(dir.path())?;
+    assert_eq!(archive.pending_flags(ACCOUNT)?.len(), 2);
+    client.sync(ACCOUNT, &mut archive, &blobs, |_| {}, || false)?;
+    assert!(archive.pending_flags(ACCOUNT)?.is_empty());
+    worker.join().unwrap();
+    Ok(())
+}
+
+#[test]
+fn interrupted_two_blob_window_replays_from_the_durable_cursor() -> Result {
+    let (url, worker) = server(13, |n, base, r| match n {
+        0 => session(base),
+        1 | 6 => method(&r, "Mailbox/get", folders()),
+        2 | 7 => method(&r, "Email/get", json!({"state":"s"})),
+        3 | 8 => {
+            let records = ["one", "two"].map(|id| {
+                let mut record = email("in");
+                record["id"] = json!(id);
+                record["blobId"] = json!(id);
+                record
+            });
+            page(&r, 0, &["one", "two"], records.to_vec())
+        },
+        4 | 5 | 9 | 10 => {
+            assert!(matches!(
+                r.path.as_str(),
+                "/download/account/one/message.eml" | "/download/account/two/message.eml"
+            ));
+            if n < 7 && r.path.contains("/two/") {
+                Reply(200, b"incomplete".into())
+            } else {
+                Reply(200, MIME.into())
+            }
+        },
+        11 => page(&r, 2, &[], vec![]),
+        _ => delta(&r, "s", "s", vec![], vec![]),
+    });
+    let dir = tempfile::tempdir()?;
+    let blobs = FileBlobs::new(dir.path());
+    let client = Client::discover(&url, "fixture".into())?;
+    let mut archive = Archive::open(dir.path())?;
+    assert!(
+        client
+            .sync(ACCOUNT, &mut archive, &blobs, |_| {}, || false)
+            .is_err()
+    );
+    drop(archive);
+    let mut archive = Archive::open(dir.path())?;
+    assert_eq!(archive.jmap_states(ACCOUNT)?.1, None);
+    client.sync(ACCOUNT, &mut archive, &blobs, |_| {}, || false)?;
+    assert_eq!(archive.jmap_states(ACCOUNT)?.1.as_deref(), Some("s"));
+    assert_eq!(archive.total()?, 2);
+    for remote in ["one", "two"] {
+        let id = archive.jmap_message(ACCOUNT, remote)?.unwrap();
+        assert_eq!(blobs.get(&archive.message_blob(id)?)?, MIME);
+    }
     worker.join().unwrap();
     Ok(())
 }

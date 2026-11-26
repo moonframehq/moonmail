@@ -34,3 +34,9 @@ MOONMAIL_LIVE_FASTMAIL=1 cargo test --locked -p moonmail-network --test fastmail
 ```
 
 The test validates both identities, claims one frozen outbox message, and sends it once. It synchronizes the dedicated accounts into a temporary archive and checks the Message-ID, subject and body in Sent and Inbox. Allow up to five minutes for observation. The temporary archive is removed on exit. The test messages remain in the test accounts for inspection. If submission is uncertain, check the sender’s Drafts and Sent before starting another run.
+
+## Measuring sync
+
+Run `just bench-jmap` to time four operations against a disposable Stalwart server. The runner seeds 96 distinct synthetic messages and reports five-run medians for a fresh archive, a 96-message flag write including resync, a second archive pulling the same changes, and an idle poll. Each idle sample averages 20 polls. Corpus creation and assertions run outside the timers. The independent archive checks every flag after each round. The fixture raises its loopback account rate limit for this workload.
+
+Use the same machine, build profile and Stalwart version for comparisons. These timings include local HTTP, MIME and disk work. Internet latency, attachment size and disk performance will affect real-account results.

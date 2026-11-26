@@ -54,6 +54,8 @@ pub struct Client {
     session: Session,
     pub(crate) account: String,
     pub(crate) batch: usize,
+    pub(crate) set_batch: u16,
+    pub(crate) downloads: usize,
 }
 
 pub(crate) fn field<'a>(value: &'a Value, key: &str) -> Result<&'a str> {
@@ -160,6 +162,14 @@ impl Client {
             .filter(|n| *n > 0)
             .ok_or(JmapError::Protocol)?
             .min(128) as usize;
+        let set_batch = session.capabilities[CORE]["maxObjectsInSet"]
+            .as_u64()
+            .unwrap_or(1)
+            .clamp(1, 128) as u16;
+        let downloads = session.capabilities[CORE]["maxConcurrentRequests"]
+            .as_u64()
+            .unwrap_or(1)
+            .clamp(1, 4) as usize;
         Ok(Self {
             http,
             token,
@@ -167,6 +177,8 @@ impl Client {
             origin,
             account,
             batch,
+            set_batch,
+            downloads,
         })
     }
     fn endpoint(&self, template: &str, blob: &str) -> Result<Url> {
@@ -235,13 +247,13 @@ impl Client {
         }
         Ok(field(&value, "blobId")?.to_owned())
     }
-    pub(crate) fn download(&self, blob: &str) -> Result<Vec<u8>> {
+    pub(crate) fn download(&self, blob: &str, size: u64) -> Result<Vec<u8>> {
         bounded(
             self.send(
                 self.http
                     .get(self.endpoint(&self.session.download_url, blob)?),
             )?,
-            64 * 1024 * 1024,
+            size,
         )
     }
     /// Open a one-state EventSource stream. Workers reconnect and sync from their durable cursor.
@@ -258,7 +270,7 @@ impl Client {
             using.push(SUBMISSION);
         }
         let body = json!({"using":using,"methodCalls":calls});
-        let reply: Value = json_body(
+        let mut reply: Value = json_body(
             self.send(
                 self.http
                     .post(self.endpoint(&self.session.api_url, "")?)
@@ -266,12 +278,12 @@ impl Client {
             )?,
         )?;
         let responses = reply["methodResponses"]
-            .as_array()
+            .as_array_mut()
             .ok_or(JmapError::Protocol)?;
         let mut values = Vec::new();
         for call in calls {
             let r = responses
-                .iter()
+                .iter_mut()
                 .find(|r| r[2] == call[2] && (r[0] == call[0] || r[0] == "error"))
                 .ok_or(JmapError::Protocol)?;
             if r[0] == "error" {
@@ -284,7 +296,7 @@ impl Client {
             if field(&r[1], "accountId")? != self.account {
                 return Err(JmapError::Protocol);
             }
-            values.push(r[1].clone());
+            values.push(r[1].take());
         }
         Ok(values)
     }

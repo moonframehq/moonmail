@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Start an isolated loopback JMAP server and run Moonmail's two-user test."""
+import argparse
 import base64
 import hashlib
 import json
@@ -60,7 +61,7 @@ def request(url, *, auth=None, body=None, form=None):
 
 def provision(base, admin, user):
     address = f"{user}@{DOMAIN}"
-    password = secrets.token_urlsafe(32)
+    password = secrets.token_hex(32)
     principal = {"type": "individual", "name": address, "emails": [address],
                  "roles": ["user"], "secrets": [password]}
     created = request(base + "/api/principal", auth=admin, body=principal)
@@ -79,17 +80,20 @@ def provision(base, admin, user):
     return grant["access_token"]
 
 
-def run(root):
+def run(root, benchmark):
     executable = binary(root)
     with socket.socket() as sock:
         sock.bind(("127.0.0.1", 0))
         port = sock.getsockname()[1]
     base = f"http://127.0.0.1:{port}"
-    password = secrets.token_urlsafe(32)
+    password = secrets.token_hex(32)
     with zipfile.ZipFile(root / "web.zip", "w") as web:
         web.writestr("index.html", "Moonmail test")
     config = root / "config.toml"
+    # Bulk measurements exceed Stalwart's normal interactive rate budget.
+    rate = 'http.rate-limit.account = "20000/1m"' if benchmark else ""
     config.write_text(f'''
+{rate}
 server.hostname = "127.0.0.1"
 server.listener.http.bind = "127.0.0.1:{port}"
 server.listener.http.protocol = "http"
@@ -131,7 +135,8 @@ webadmin.resource = "file://{root}/web.zip"
             env[f"MOONMAIL_STALWART_{user.upper()}_TOKEN"] = provision(base, admin, user)
         print("Stalwart ready. Two synthetic accounts have independent bearer grants.", flush=True)
         subprocess.run(["cargo", "test", "--locked", "-p", "moonmail-network", "--test",
-                        "stalwart", "--", "--include-ignored",
+                        "stalwart", "--", "--ignored", "--exact",
+                        "sync_performance" if benchmark else "two_account_round_trip",
                         "--nocapture"], check=True, env=env)
     finally:
         proc.terminate()
@@ -143,5 +148,8 @@ webadmin.resource = "file://{root}/web.zip"
 
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--benchmark", action="store_true", help="Measure JMAP sync on a synthetic corpus")
+    args = parser.parse_args()
     with tempfile.TemporaryDirectory(prefix="moonmail-stalwart-") as temp:
-        run(Path(temp).resolve())
+        run(Path(temp).resolve(), args.benchmark)
