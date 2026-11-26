@@ -73,8 +73,10 @@ the GUI. For browser sign-in:
    refresh separately after token expiry. Verify Archive preserves mail in All Mail.
 
 Google testing-mode grants may expire after seven days. A distributed application
-using the restricted Gmail scope needs Google's verification process. No shared
-Google client is bundled.
+using the restricted Gmail scope needs Google's verification process. The default
+build requires a client import. To test a configured release, package it with
+`just bundle /path/to/desktop-client.json` and use **Sign in with Google**
+in the resulting app. An existing Keychain import takes precedence.
 
 References: [desktop OAuth](https://developers.google.com/identity/protocols/oauth2/native-app),
 [Gmail XOAUTH2](https://developers.google.com/workspace/gmail/imap/xoauth2-protocol).

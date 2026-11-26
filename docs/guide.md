@@ -290,8 +290,9 @@ For browser sign-in using your own client:
 2. Download its client JSON and choose **Import OAuth client…** in Moonmail.
 3. Choose **Sign in with Google**, authorize the same email address, then **Sync**.
 
-Client configuration and tokens are stored in Keychain. Packagers can include their Google Desktop app JSON at
-`Moonmail.app/Contents/Resources/google-desktop-client.json` before signing.
+Imported clients and account tokens are stored in Keychain. On macOS, `just bundle /path/to/desktop-client.json` builds the release app, copies the client to
+`target/bundle/Moonmail.app/Contents/Resources/google-desktop-client.json`, and signs it ad hoc for local use.
+Omit the path to build the app without a Google client. Apply your distribution signature to the configured app before archiving it.
 A Keychain import takes precedence. The source checkout includes no registration. Google's testing-mode grants can expire after seven days; broader
 distribution of this restricted mail scope requires Google's verification process.
 See [Google desktop OAuth](https://developers.google.com/identity/protocols/oauth2/native-app)

@@ -106,6 +106,24 @@ fn packaged_google_client<E: std::error::Error + 'static>(
     parse_client(Provider::Google, secret.expose_secret().as_bytes()).map(Some)
 }
 
+fn resolve_desktop_client<E: std::error::Error + 'static>(
+    provider: Provider,
+    imported: Option<SecretString>,
+    executable: impl FnOnce() -> std::io::Result<std::path::PathBuf>,
+) -> Result<DesktopClient, AuthError<E>> {
+    if let Some(json) = imported {
+        return Ok(serde_json::from_str(json.expose_secret())?);
+    }
+    if provider == Provider::Google
+        && let Some(client) = packaged_google_client(&executable()?)?
+    {
+        return Ok(client);
+    }
+    Err(AuthError::Protocol(
+        "Import this provider's desktop OAuth client in Internet Accounts first, or use an app password",
+    ))
+}
+
 fn apply_tokens<E: std::error::Error + 'static>(
     record: &mut Record,
     tokens: &Tokens,
@@ -176,16 +194,8 @@ impl<C: CredentialStore> Auth<C> {
         let key = format!("oauth-client:{}", config.key);
         let desktop: DesktopClient = {
             let _lock = self.store.lock(&key).map_err(AuthError::Credentials)?;
-            if let Some(json) = self.store.load(&key).map_err(AuthError::Credentials)? {
-                serde_json::from_str(json.expose_secret())?
-            } else {
-                let packaged = if provider == Provider::Google {
-                    packaged_google_client(&std::env::current_exe()?)?
-                } else {
-                    None
-                };
-                packaged.ok_or(AuthError::Protocol("Import this provider's desktop OAuth client in Internet Accounts first, or use an app password"))?
-            }
+            let imported = self.store.load(&key).map_err(AuthError::Credentials)?;
+            resolve_desktop_client(provider, imported, std::env::current_exe)?
         };
         let client = self.client()?;
         let listener = TcpListener::bind(("127.0.0.1", 0))?;
@@ -320,6 +330,48 @@ mod tests {
         assert!(packaged_google_client::<std::io::Error>(&dir.path().join("moonmail"))?.is_none());
         std::fs::write(path, vec![b'a'; 65537])?;
         assert!(packaged_google_client::<std::io::Error>(&exe).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn imported_client_precedes_the_google_bundle_and_missing_clients_require_import() -> TestResult
+    {
+        let dir = tempfile::tempdir()?;
+        let contents = dir.path().join("Moonmail.app/Contents");
+        let resources = contents.join("Resources");
+        std::fs::create_dir_all(&resources)?;
+        let client_file = resources.join("google-desktop-client.json");
+        let resolve = |provider, imported| {
+            resolve_desktop_client::<std::io::Error>(provider, imported, || {
+                Ok(contents.join("MacOS/moonmail"))
+            })
+        };
+        assert!(matches!(
+            resolve(Provider::Google, None),
+            Err(AuthError::Protocol(_))
+        ));
+        std::fs::write(
+            &client_file,
+            br#"{"installed":{"client_id":"bundle.apps.googleusercontent.com"}}"#,
+        )?;
+        assert_eq!(
+            resolve(Provider::Google, None)?.client_id,
+            "bundle.apps.googleusercontent.com"
+        );
+        assert!(matches!(
+            resolve(Provider::Microsoft, None),
+            Err(AuthError::Protocol(_))
+        ));
+        assert!(matches!(
+            resolve(Provider::Google, Some("invalid".into())),
+            Err(AuthError::Json(_))
+        ));
+        std::fs::write(client_file, b"invalid")?;
+        let imported = SecretString::from(r#"{"client_id":"imported.apps.googleusercontent.com"}"#);
+        assert_eq!(
+            resolve(Provider::Google, Some(imported))?.client_id,
+            "imported.apps.googleusercontent.com"
+        );
         Ok(())
     }
 

@@ -17,6 +17,21 @@ demo:
 build:
     cargo build --locked -p moonmail-app --release
 
+# Build a locally signed macOS app, optionally including a Google desktop client.
+bundle google_client="":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    client={{quote(google_client)}}
+    if [[ $(uname -s) != Darwin ]]; then echo "This recipe builds a macOS app" >&2; exit 1; fi
+    if [[ -n "$client" && ! -f "$client" ]]; then echo "Google desktop client file missing" >&2; exit 1; fi
+    cargo run --locked --release -p moonmail-app -- bundle target/bundle
+    app=target/bundle/Moonmail.app
+    if [[ -n "$client" ]]; then
+        install -m 0644 -- "$client" "$app/Contents/Resources/google-desktop-client.json"
+        codesign --force --sign - "$app"
+    fi
+    codesign --verify --strict --deep "$app"
+
 check:
     cargo run --locked -p moonmail-app -- --check --no-user
 
