@@ -42,24 +42,22 @@ pub(crate) fn replace_observed(
     message: i64,
     keywords: &[String],
 ) -> Result<()> {
-    db.execute(
-        "DELETE FROM occurrence_keywords WHERE mailbox_id=?1 AND message_id=?2",
-        params![mailbox, message],
-    )?;
+    db.prepare_cached("DELETE FROM occurrence_keywords WHERE mailbox_id=?1 AND message_id=?2")?
+        .execute(params![mailbox, message])?;
     for keyword in keywords {
-        db.execute(
-            "INSERT INTO occurrence_keywords VALUES (?1,?2,?3)",
-            params![mailbox, message, keyword],
-        )?;
+        db.prepare_cached("INSERT INTO occurrence_keywords VALUES (?1,?2,?3)")?
+            .execute(params![mailbox, message, keyword])?;
     }
     // Overlay both queued and blocked local intent; a failed server operation
     // must never silently erase the user's visible desired state.
-    db.execute("DELETE FROM occurrence_keywords AS k WHERE k.mailbox_id=?1 AND k.message_id=?2 AND EXISTS(
+    db.prepare_cached("DELETE FROM occurrence_keywords AS k WHERE k.mailbox_id=?1 AND k.message_id=?2 AND EXISTS(
         SELECT 1 FROM keyword_operations f JOIN occurrences o ON o.mailbox_id=f.mailbox_id AND o.epoch=f.epoch AND o.uid=f.uid
-        WHERE o.mailbox_id=k.mailbox_id AND o.message_id=k.message_id AND f.keyword=k.keyword AND f.gmail=0 AND f.value=0)",params![mailbox,message])?;
-    db.execute("INSERT OR IGNORE INTO occurrence_keywords SELECT o.mailbox_id,o.message_id,f.keyword
+        WHERE o.mailbox_id=k.mailbox_id AND o.message_id=k.message_id AND f.keyword=k.keyword AND f.gmail=0 AND f.value=0)")?
+        .execute(params![mailbox,message])?;
+    db.prepare_cached("INSERT OR IGNORE INTO occurrence_keywords SELECT o.mailbox_id,o.message_id,f.keyword
         FROM occurrences o JOIN keyword_operations f ON f.mailbox_id=o.mailbox_id AND f.epoch=o.epoch AND f.uid=o.uid
-        WHERE o.mailbox_id=?1 AND o.message_id=?2 AND f.gmail=0 AND f.value=1",params![mailbox,message])?;
+        WHERE o.mailbox_id=?1 AND o.message_id=?2 AND f.gmail=0 AND f.value=1")?
+        .execute(params![mailbox,message])?;
     Ok(())
 }
 

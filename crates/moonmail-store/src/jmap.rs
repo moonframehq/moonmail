@@ -10,20 +10,46 @@ pub struct JmapFolder {
     pub role: Option<MailboxRole>,
 }
 
+pub struct JmapObservation {
+    pub message: MessageId,
+    pub uid: u32,
+    pub folders: Vec<i64>,
+    pub seen: bool,
+    pub flagged: bool,
+    pub keywords: Vec<String>,
+}
+
 impl Archive {
     pub fn bind_jmap(&self, account: &str, remote: &str) -> Result<()> {
-        self.connection.execute(
-            "INSERT OR IGNORE INTO jmap_accounts(account,remote) VALUES(?1,?2)",
-            params![account, remote],
+        self.bound_jmap_states(account, remote).map(|_| ())
+    }
+
+    pub fn bound_jmap_states(
+        &self,
+        account: &str,
+        remote: &str,
+    ) -> Result<(Option<String>, Option<String>)> {
+        let mut read = self.connection.prepare_cached(
+            "SELECT remote=?2,folder_state,mail_state FROM jmap_accounts WHERE account=?1",
         )?;
-        if !self.connection.query_row(
-            "SELECT remote=?2 FROM jmap_accounts WHERE account=?1",
-            params![account, remote],
-            |r| r.get::<_, bool>(0),
-        )? {
+        let states = |r: &rusqlite::Row| Ok((r.get::<_, bool>(0)?, r.get(1)?, r.get(2)?));
+        let (bound, folders, email) = match read
+            .query_row(params![account, remote], states)
+            .optional()?
+        {
+            Some(row) => row,
+            None => {
+                self.connection.execute(
+                    "INSERT OR IGNORE INTO jmap_accounts(account,remote) VALUES(?1,?2)",
+                    params![account, remote],
+                )?;
+                read.query_row(params![account, remote], states)?
+            },
+        };
+        if !bound {
             return Err(Error::Invalid("JMAP primary account changed"));
         }
-        Ok(())
+        Ok((folders, email))
     }
     pub fn invalidate_jmap(&self, account: &str) -> Result<()> {
         self.connection.execute(
@@ -88,37 +114,6 @@ impl Archive {
                 .collect::<rusqlite::Result<_>>()?,
         )
     }
-    pub fn jmap_uid(&self, account: &str, id: &str) -> Result<u32> {
-        if let Some(uid) = self
-            .connection
-            .query_row(
-                "SELECT uid FROM jmap_emails WHERE account=?1 AND remote=?2",
-                params![account, id],
-                |r| r.get(0),
-            )
-            .optional()?
-        {
-            return Ok(uid);
-        }
-        Ok(self.connection.query_row("INSERT INTO jmap_emails(account,remote) VALUES(?1,?2) ON CONFLICT(account,remote) DO UPDATE SET remote=excluded.remote RETURNING uid",params![account,id],|r|r.get(0))?)
-    }
-    pub fn jmap_remote(&self, account: &str, uid: u32) -> Result<String> {
-        Ok(self.connection.query_row(
-            "SELECT remote FROM jmap_emails WHERE account=?1 AND uid=?2",
-            params![account, uid],
-            |r| r.get(0),
-        )?)
-    }
-    pub fn jmap_message(&self, account: &str, id: &str) -> Result<Option<MessageId>> {
-        Ok(self
-            .connection
-            .query_row(
-                "SELECT id FROM messages WHERE account=?1 AND origin='jmap:'||?2",
-                params![account, id],
-                |r| Ok(MessageId(r.get::<_, i64>(0)? as u64)),
-            )
-            .optional()?)
-    }
     pub fn observe_jmap(
         &mut self,
         id: MessageId,
@@ -128,25 +123,47 @@ impl Archive {
         flagged: bool,
         keywords: &[String],
     ) -> Result<()> {
-        let keywords = crate::keywords::normalize(keywords)?;
+        self.observe_jmap_batch(&[JmapObservation {
+            message: id,
+            uid,
+            folders: folders.to_vec(),
+            seen,
+            flagged,
+            keywords: keywords.to_vec(),
+        }])
+    }
+    /// Apply a bounded Email/get page under one durable transaction.
+    pub fn observe_jmap_batch(&mut self, observations: &[JmapObservation]) -> Result<()> {
+        if observations.is_empty() {
+            return Ok(());
+        }
         let tx = self.connection.transaction()?;
-        let id = id.0 as i64;
-        tx.execute("DELETE FROM occurrences WHERE message_id=?1 AND mailbox_id NOT IN (SELECT value FROM json_each(?2))",params![id,serde_json::to_string(folders)?])?;
-        for folder in folders {
-            let new = tx.execute(
-                "INSERT OR IGNORE INTO occurrences VALUES(?1,?2,0,?3,?4,?5)",
-                params![folder, id, uid, seen, flagged],
-            )?;
-            tx.execute(
-                "UPDATE occurrences SET
-                seen=coalesce((SELECT value FROM flag_operations WHERE mailbox_id=?1 AND epoch=0 AND uid=occurrences.uid AND kind='seen'),?3),
-                flagged=coalesce((SELECT value FROM flag_operations WHERE mailbox_id=?1 AND epoch=0 AND uid=occurrences.uid AND kind='flagged'),?4)
-                WHERE mailbox_id=?1 AND message_id=?2",
-                params![folder, id, seen, flagged],
-            )?;
-            crate::keywords::replace_observed(&tx, *folder, id, &keywords)?;
-            if new > 0 {
-                crate::rules::on_entry(&tx, *folder, MessageId(id as u64))?;
+        for JmapObservation {
+            message,
+            uid,
+            folders,
+            seen,
+            flagged,
+            keywords,
+        } in observations
+        {
+            let keywords = crate::keywords::normalize(keywords)?;
+            let id = message.0 as i64;
+            tx.prepare_cached("DELETE FROM occurrences WHERE message_id=?1 AND mailbox_id NOT IN (SELECT value FROM json_each(?2))")?.execute(params![id,serde_json::to_string(folders)?])?;
+            for folder in folders {
+                let new = tx
+                    .prepare_cached("INSERT OR IGNORE INTO occurrences VALUES(?1,?2,0,?3,?4,?5)")?
+                    .execute(params![folder, id, uid, seen, flagged])?;
+                tx.prepare_cached(
+                    "UPDATE occurrences SET
+                     seen=coalesce((SELECT value FROM flag_operations WHERE mailbox_id=?1 AND epoch=0 AND uid=occurrences.uid AND kind='seen'),?3),
+                     flagged=coalesce((SELECT value FROM flag_operations WHERE mailbox_id=?1 AND epoch=0 AND uid=occurrences.uid AND kind='flagged'),?4)
+                     WHERE mailbox_id=?1 AND message_id=?2"
+                )?.execute(params![folder,id,seen,flagged])?;
+                crate::keywords::replace_observed(&tx, *folder, id, &keywords)?;
+                if new > 0 {
+                    crate::rules::on_entry(&tx, *folder, MessageId(id as u64))?;
+                }
             }
         }
         tx.commit()?;
@@ -159,6 +176,13 @@ impl Archive {
     pub fn stage_jmap_id(&self, id: &str) -> Result<()> {
         self.connection
             .execute("INSERT OR IGNORE INTO jmap_inventory VALUES(?1)", [id])?;
+        Ok(())
+    }
+    pub fn stage_jmap_ids(&self, ids: &[&str]) -> Result<()> {
+        self.connection.execute(
+            "INSERT OR IGNORE INTO jmap_inventory SELECT value FROM json_each(?1)",
+            [serde_json::to_string(ids)?],
+        )?;
         Ok(())
     }
     pub fn checkpoint_jmap(
@@ -187,11 +211,11 @@ impl Archive {
 
 impl Archive {
     pub fn mail_edits_pending(&self, account: &str) -> Result<bool> {
-        Ok(self.connection.query_row("SELECT EXISTS(SELECT 1 FROM flag_operations f JOIN mailboxes b ON b.id=f.mailbox_id WHERE b.account=?1 )
+        Ok(self.connection.prepare_cached("SELECT EXISTS(SELECT 1 FROM flag_operations f JOIN mailboxes b ON b.id=f.mailbox_id WHERE b.account=?1 )
             OR EXISTS(SELECT 1 FROM keyword_operations k JOIN mailboxes b ON b.id=k.mailbox_id WHERE b.account=?1 AND k.state='queued')
             OR EXISTS(SELECT 1 FROM move_operations m JOIN mailboxes b ON b.id=m.source_id WHERE b.account=?1 AND m.state='queued')
             OR EXISTS(SELECT 1 FROM expunge_operations WHERE account=?1 AND state IN ('queued','running','unknown'))
             OR EXISTS(SELECT 1 FROM draft_uploads WHERE account=?1)
-            OR EXISTS(SELECT 1 FROM folder_operations WHERE account=?1 AND state='queued')",[account],|r|r.get(0))?)
+            OR EXISTS(SELECT 1 FROM folder_operations WHERE account=?1 AND state='queued')")?.query_row([account],|r|r.get(0))?)
     }
 }

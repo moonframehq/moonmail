@@ -10,6 +10,13 @@ impl Archive {
     /// Neither SMTP outcome nor retry eligibility is changed. Multiple matches
     /// are explicitly ambiguous. Missing data never schedules SMTP or APPEND.
     pub fn reconcile_sent(&mut self, account: &str) -> Result<()> {
+        if !self
+            .connection
+            .prepare_cached("SELECT EXISTS(SELECT 1 FROM outbox WHERE account=?1)")?
+            .query_row([account], |row| row.get::<_, bool>(0))?
+        {
+            return Ok(());
+        }
         let mailbox = match self.role_mailbox(account, MailboxRole::Sent) {
             Ok(id) => Some(id),
             Err(Error::Invalid(_)) => None,

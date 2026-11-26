@@ -31,7 +31,7 @@ mod sync_inventory;
 mod thread_graph;
 
 pub use {
-    archive::{Archive, IncomingMessage, IndexWork},
+    archive::{Archive, IncomingMessage, IndexWork, StoredMime},
     blobs::{BlobError, FileBlobs, content_digest},
     correspondents::Correspondent,
     demo::seed_demo,
@@ -56,4 +56,10 @@ pub use {
     sync_inventory::{GmailMetadata, InventoryKind, SyncCheckpoint, SyncFlags, SyncMessage},
 };
 mod jmap;
-pub use jmap::JmapFolder;
+mod jmap_emails;
+mod jmap_flags;
+pub use {
+    jmap::{JmapFolder, JmapObservation},
+    jmap_emails::JmapEmailHandle,
+    jmap_flags::JmapFlag,
+};

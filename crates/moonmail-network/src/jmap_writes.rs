@@ -78,6 +78,43 @@ impl Client {
 }
 
 impl Client {
+    fn flush_flags(
+        &self,
+        account: &str,
+        archive: &mut moonmail_store::Archive,
+        boundary: &impl Fn() -> crate::Result<()>,
+    ) -> crate::Result<()> {
+        let mut after = 0;
+        loop {
+            let flags = archive.jmap_flags(account, after, self.set_batch)?;
+            let Some(last) = flags.last() else {
+                return Ok(());
+            };
+            after = last.id;
+            boundary()?;
+            let mut updates = serde_json::Map::new();
+            for flag in &flags {
+                let patch = updates.entry(&flag.remote).or_insert_with(|| json!({}));
+                patch[format!("keywords/${}", flag.kind)] = json!(flag.value.then_some(true));
+            }
+            let reply = self.method("Email/set", json!({"update":updates}))?;
+            let mut accepted = Vec::new();
+            let mut failure = None;
+            for flag in &flags {
+                match check(&reply, "updated", &flag.remote) {
+                    Ok(()) | Err(JmapError::NotFound) => accepted.push(flag),
+                    Err(error) => {
+                        failure.get_or_insert(error);
+                    },
+                }
+            }
+            archive.acknowledge_jmap_flags(&accepted)?;
+            if let Some(error) = failure {
+                return Err(error.into());
+            }
+        }
+    }
+
     pub(crate) fn flush_edits(
         &self,
         account: &str,
@@ -91,18 +128,7 @@ impl Client {
                 Ok(())
             }
         };
-        for op in archive.pending_flags(account)? {
-            boundary()?;
-            if op.epoch != 0 {
-                continue;
-            }
-            let id = archive.jmap_remote(account, op.uid)?;
-            match self.keyword(&id, &format!("${}", op.kind), op.value) {
-                Ok(()) | Err(JmapError::NotFound) => {},
-                Err(e) => return Err(e.into()),
-            }
-            archive.acknowledge_flag(&op)?;
-        }
+        self.flush_flags(account, archive, &boundary)?;
         let mut after = 0;
         loop {
             let ops = archive.keyword_operations(account, after)?;

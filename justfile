@@ -119,6 +119,9 @@ test-mail-docker: test-mail-image
 test-stalwart:
     python3 scripts/test_stalwart.py
 
+bench-jmap:
+    python3 scripts/test_stalwart.py --benchmark
+
 # Real independent server with two accounts and validated implicit TLS and STARTTLS.
 test-stalwart-imap-smtp:
     python3 -B scripts/test_stalwart_imap.py

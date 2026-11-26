@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Start an isolated loopback JMAP server and run Moonmail's two-user test."""
+import argparse
 import base64
 import hashlib
 import json
@@ -79,7 +80,7 @@ def provision(base, admin, user):
     return password, grant["access_token"]
 
 
-def run(root, *, setup_mail=None):
+def run(root, benchmark=False, *, setup_mail=None):
     executable = binary(root)
     with socket.socket() as sock:
         sock.bind(("127.0.0.1", 0))
@@ -90,8 +91,11 @@ def run(root, *, setup_mail=None):
     with zipfile.ZipFile(root / "web.zip", "w") as web:
         web.writestr("index.html", "Moonmail test")
     config = root / "config.toml"
+    # Bulk measurements exceed Stalwart's normal interactive rate budget.
+    rate = 'http.rate-limit.account = "20000/1m"' if benchmark else ""
     config.write_text(f'''
 {mail_listeners}
+{rate}
 server.hostname = "127.0.0.1"
 server.listener.http.bind = "127.0.0.1:{port}"
 server.listener.http.protocol = "http"
@@ -142,7 +146,8 @@ webadmin.resource = "file://{root}/web.zip"
             return
         print("Stalwart ready. Two synthetic accounts have independent bearer grants.", flush=True)
         subprocess.run(["cargo", "test", "--locked", "-p", "moonmail-network", "--test",
-                        "stalwart", "--", "--include-ignored",
+                        "stalwart", "--", "--ignored", "--exact",
+                        "sync_performance" if benchmark else "two_account_round_trip",
                         "--nocapture"], check=True, env=env)
     finally:
         proc.terminate()
@@ -154,5 +159,8 @@ webadmin.resource = "file://{root}/web.zip"
 
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--benchmark", action="store_true", help="Measure JMAP sync on a synthetic corpus")
+    args = parser.parse_args()
     with tempfile.TemporaryDirectory(prefix="moonmail-stalwart-") as temp:
-        run(Path(temp).resolve())
+        run(Path(temp).resolve(), args.benchmark)
