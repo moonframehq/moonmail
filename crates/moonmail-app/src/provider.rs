@@ -1193,7 +1193,8 @@ impl Native for Mail {
                         match result {
                             Ok(()) => self.status = "Operation completed".into(),
                             Err(error) => {
-                                tracing::warn!(%error, "operation stopped");
+                                // The UI error chain can contain private server response text.
+                                tracing::warn!("operation stopped");
                                 self.status = "Operation stopped".into();
                                 self.error = error;
                             },

@@ -1,7 +1,7 @@
 use {
     crate::{
         Account, Error, ExposeSecret, LoginSecret, Provider, Result, SecretString, TlsMode,
-        oauth_bearer,
+        auth::account_bearer,
     },
     moonmail_core::{FolderChange, MailboxRole},
     std::{
@@ -374,7 +374,12 @@ impl RustImap {
             let (mechanism, payload) = if capabilities.has_str("AUTH=OAUTHBEARER") {
                 (
                     "OAUTHBEARER",
-                    oauth_bearer(&account.imap_host, account.imap_port, &secret.value),
+                    account_bearer(
+                        account.imap_login(),
+                        &account.imap_host,
+                        account.imap_port,
+                        &secret.value,
+                    ),
                 )
             } else if capabilities.has_str("AUTH=XOAUTH2") {
                 (
@@ -391,6 +396,7 @@ impl RustImap {
                     "Server does not advertise OAuth IMAP authentication",
                 ));
             };
+            tracing::debug!(mechanism, "authenticating IMAP connection");
             client
                 .authenticate(
                     mechanism,
@@ -399,9 +405,19 @@ impl RustImap {
                         xoauth2: mechanism == "XOAUTH2",
                     },
                 )
-                .map_err(|(error, _)| match error {
-                    imap::Error::No(_) => Error::LoginRejected,
-                    e => Error::Imap(e),
+                .map_err(|(error, _)| {
+                    let response = match &error {
+                        imap::Error::Bad(_) => "BAD",
+                        imap::Error::No(_) => "NO",
+                        imap::Error::Bye(_) => "BYE",
+                        imap::Error::Io(_) | imap::Error::ConnectionLost => "transport",
+                        _ => "protocol",
+                    };
+                    tracing::warn!(mechanism, response, "IMAP authentication failed");
+                    match error {
+                        imap::Error::No(_) => Error::LoginRejected,
+                        e => Error::Imap(e),
+                    }
                 })?
         } else {
             client
@@ -411,6 +427,7 @@ impl RustImap {
                     e => Error::Imap(e),
                 })?
         };
+        tracing::debug!("IMAP authenticated, requesting session capabilities");
         let caps = session.capabilities()?;
         let gmail = caps.has_str("X-GM-EXT-1");
         let condstore = caps.has_str("CONDSTORE") || caps.has_str("QRESYNC");

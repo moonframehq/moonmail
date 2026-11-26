@@ -190,6 +190,7 @@ impl<C: CredentialStore> Auth<C> {
                 "urn:ietf:params:jmap:core urn:ietf:params:jmap:mail urn:ietf:params:jmap:submission offline_access"
             },
         };
+        tracing::debug!(?transport, "starting Fastmail OAuth discovery");
         let _lock = self.store.lock(email).map_err(AuthError::Credentials)?;
         let client = self.client()?;
         let metadata = self.discovery(&client)?;
@@ -199,6 +200,7 @@ impl<C: CredentialStore> Auth<C> {
             "http://127.0.0.1:{}/oauth/fastmail",
             listener.local_addr()?.port()
         );
+        tracing::debug!("registering Fastmail OAuth client");
         let registration: Registration = client
             .post(&metadata.registration_endpoint)
             .json(&serde_json::json!({
@@ -255,8 +257,10 @@ impl<C: CredentialStore> Auth<C> {
             };
             url.query_pairs_mut().append_pair("resource", resource);
         }
+        tracing::debug!("opening browser for Fastmail sign-in");
         open::that(url.as_str())?;
         let code = receive_code(&listener, state.secret(), &redirect, Provider::Fastmail)?;
+        tracing::debug!("Fastmail callback accepted, exchanging authorization code");
         let tokens: Tokens = client
             .post(&metadata.token_endpoint)
             .form(&[
@@ -269,6 +273,7 @@ impl<C: CredentialStore> Auth<C> {
             .send()?
             .error_for_status()?
             .json()?;
+        tracing::debug!("Fastmail token exchange complete, saving credentials");
         self.persist_tokens(email, registration.client_id, &tokens)
     }
 
@@ -548,13 +553,42 @@ fn parse_callback_for(
 }
 
 pub fn oauth_bearer(host: &str, port: u16, token: &SecretString) -> SecretString {
+    bearer_payload("", host, port, token)
+}
+
+pub(crate) fn account_bearer(
+    login: &str,
+    host: &str,
+    port: u16,
+    token: &SecretString,
+) -> SecretString {
+    // RFC 5801 saslname escaping for the GS2 authorization identity.
+    let identity = login.replace('=', "=3D").replace(',', "=2C");
+    bearer_payload(&format!("a={identity}"), host, port, token)
+}
+
+fn bearer_payload(identity: &str, host: &str, port: u16, token: &SecretString) -> SecretString {
     let token = token.expose_secret();
-    format!("n,,\x01host={host}\x01port={port}\x01auth=Bearer {token}\x01\x01").into()
+    format!("n,{identity},\x01host={host}\x01port={port}\x01auth=Bearer {token}\x01\x01").into()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bearer_includes_escaped_authorization_identity() {
+        let payload = account_bearer(
+            "one=two,three@example.test",
+            "imap.fastmail.com",
+            993,
+            &"synthetic".into(),
+        );
+        assert_eq!(
+            payload.expose_secret(),
+            "n,a=one=3Dtwo=2Cthree@example.test,\x01host=imap.fastmail.com\x01port=993\x01auth=Bearer synthetic\x01\x01"
+        );
+    }
 
     fn parse_callback(target: &str, state: &str, redirect: &str) -> Option<Callback> {
         parse_callback_for(target, state, redirect, Provider::Fastmail)
