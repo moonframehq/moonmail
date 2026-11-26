@@ -15,13 +15,34 @@ mod mbox;
 const LIMIT: usize = 64 * 1024 * 1024;
 
 pub(super) fn from_path(path: &Path, root: &Path) -> Result<usize> {
-    let source = path.canonicalize()?;
-    let destination = root.canonicalize()?;
-    ensure!(
-        !destination.starts_with(&source) && !source.starts_with(&destination),
-        "Choose a source outside the Moonmail archive"
-    );
+    check_destination(path, root)?;
     run(path, &mut Archive::open(root)?, &FileBlobs::new(root))
+}
+
+// The CLI checks before it creates the archive directory, lock, or database.
+pub(super) fn check_destination(path: &Path, root: &Path) -> Result<()> {
+    let source = path.canonicalize()?;
+    let absolute = std::path::absolute(root)?;
+    for parent in absolute.ancestors() {
+        match parent.canonicalize() {
+            Ok(existing) => {
+                ensure!(
+                    !existing.starts_with(&source)
+                        && !(parent == absolute && source.starts_with(&existing)),
+                    "Choose a source outside the Moonmail archive"
+                );
+                return Ok(());
+            },
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                ensure!(
+                    parent.file_name().is_some(),
+                    "Use a destination without unresolved parent components"
+                );
+            },
+            Err(error) => return Err(error.into()),
+        }
+    }
+    anyhow::bail!("Cannot resolve the archive directory")
 }
 
 fn run(path: &Path, archive: &mut Archive, blobs: &FileBlobs) -> Result<usize> {
@@ -32,7 +53,7 @@ fn run(path: &Path, archive: &mut Archive, blobs: &FileBlobs) -> Result<usize> {
         count: 0,
     };
     reader
-        .visit(path, "Imported", true)
+        .visit(path, "Imported", "Imported", true)
         .with_context(|| format!("Importing {}", path.display()))?;
     Ok(reader.count)
 }
@@ -45,7 +66,13 @@ struct Import<'a> {
 }
 
 impl Import<'_> {
-    fn visit(&mut self, path: &Path, folder: &str, explicit: bool) -> Result<()> {
+    fn visit(
+        &mut self,
+        path: &Path,
+        folder: &str,
+        loose_folder: &str,
+        explicit: bool,
+    ) -> Result<()> {
         let kind = fs::symlink_metadata(path)?.file_type();
         if kind.is_dir() {
             let maildir = ["cur", "new"]
@@ -74,53 +101,56 @@ impl Import<'_> {
             }
             for entry in fs::read_dir(path)? {
                 let entry = entry?;
-                let name = entry.file_name();
-                let name = name.to_string_lossy();
-                if maildir {
-                    if matches!(name.as_ref(), "cur" | "new" | "tmp")
-                        || !entry.file_type()?.is_dir()
-                    {
+                let kind = entry.file_type()?;
+                if kind.is_dir() {
+                    let name = entry.file_name();
+                    let name = name.to_string_lossy();
+                    if maildir && matches!(name.as_ref(), "cur" | "new" | "tmp") {
                         continue;
                     }
-                    let child = name
-                        .strip_prefix('.')
-                        .map_or_else(|| name.to_string(), |n| n.replace('.', "/"));
-                    self.visit(&entry.path(), &format!("{folder}/{child}"), false)?;
-                } else {
-                    let child = entry.path();
-                    // Preserve legacy recursive .eml imports into Imported. A
-                    // nested Maildir gets its own mailbox.
-                    let child_folder = if entry.file_type()?.is_dir()
-                        && child.join("cur").is_dir()
-                        && child.join("new").is_dir()
-                    {
-                        format!("{folder}/{name}")
+                    let child = if maildir && let Some(inbox) = name.strip_prefix("..") {
+                        format!("INBOX/{}", inbox.replace('.', "/"))
+                    } else if maildir && let Some(subfolder) = name.strip_prefix('.') {
+                        subfolder.replace('.', "/")
                     } else {
-                        folder.to_owned()
+                        name.into_owned()
                     };
-                    self.visit(&child, &child_folder, false)?;
+                    let child = format!("{folder}/{child}");
+                    self.visit(
+                        &entry.path(),
+                        &child,
+                        if maildir { &child } else { loose_folder },
+                        false,
+                    )?;
+                } else if !maildir && kind.is_file() {
+                    self.visit_file(&entry.path(), loose_folder, false)?;
                 }
             }
         } else if kind.is_file() {
-            let extension = path.extension().unwrap_or_default();
-            if extension.eq_ignore_ascii_case("eml") {
-                let mailbox = self.archive.mailbox("local", folder)?;
-                self.single(path, mailbox, true, false)?;
-            } else if explicit
-                || extension.eq_ignore_ascii_case("mbox")
-                || extension.eq_ignore_ascii_case("mbx")
-                || (path.file_name().is_some_and(|name| name == "mbox")
-                    && path
-                        .parent()
-                        .and_then(Path::extension)
-                        .is_some_and(|ext| ext.eq_ignore_ascii_case("mbox")))
-            {
-                let file = File::open(path)?;
-                let mailbox = self.archive.mailbox("local", folder)?;
-                mbox::read(BufReader::new(file), |bytes| {
-                    self.store(bytes, mailbox, true, false)
-                })?;
-            }
+            self.visit_file(path, loose_folder, explicit)?;
+        }
+        Ok(())
+    }
+
+    fn visit_file(&mut self, path: &Path, folder: &str, explicit: bool) -> Result<()> {
+        let extension = path.extension().unwrap_or_default();
+        if extension.eq_ignore_ascii_case("eml") {
+            let mailbox = self.archive.mailbox("local", folder)?;
+            self.single(path, mailbox, true, false)?;
+        } else if explicit
+            || extension.eq_ignore_ascii_case("mbox")
+            || extension.eq_ignore_ascii_case("mbx")
+            || (path.file_name().is_some_and(|name| name == "mbox")
+                && path
+                    .parent()
+                    .and_then(Path::extension)
+                    .is_some_and(|ext| ext.eq_ignore_ascii_case("mbox")))
+        {
+            let file = File::open(path)?;
+            let mailbox = self.archive.mailbox("local", folder)?;
+            mbox::read(BufReader::new(file), |bytes| {
+                self.store(bytes, mailbox, true, false)
+            })?;
         }
         Ok(())
     }
@@ -206,6 +236,28 @@ mod tests {
         assert_eq!(run(&eml, &mut archive, &blobs)?, 1);
         assert_eq!(archive.total()?, 2);
         Ok(())
+    }
+
+    #[test]
+    fn invalid_length_does_not_commit_a_partial_record() {
+        for record in [
+            "Content-Length: -1\n\nx",
+            "Content-Length: 2\ncontent-length: 3\n\nabc",
+            "Content-Length: 20\n\nshort",
+            "Content-Length: 1\n\nabc",
+            "Content-Length: 67108865\n\n",
+        ] {
+            let input = format!("From first\nSubject: valid\n\nbody\n\nFrom second\n{record}");
+            let mut decoded = Vec::new();
+            assert!(
+                mbox::read(input.as_bytes(), |msg| {
+                    decoded.push(msg.to_vec());
+                    Ok(())
+                })
+                .is_err()
+            );
+            assert_eq!(decoded, [b"Subject: valid\n\nbody\n"]);
+        }
     }
 
     #[test]

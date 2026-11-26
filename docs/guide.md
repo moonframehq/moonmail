@@ -551,15 +551,35 @@ just reindex
 MOONMAIL_DATA_DIR=/path/to/archive just run
 ```
 
-Use **Mail → Import mail file…** for an EML or mboxrd file, or **Import mail folder…**
-for a Maildir or a directory containing EML files. The import runs in the background.
-Maildir imports messages from `cur` and `new`, including extensionless files,
-reads the seen and flagged filename bits, and maps Maildir++ subfolders beneath
-Imported. Temporary deliveries and symlinks are skipped. mboxrd imports stream one
-message at a time and decode quoted From lines. Each message is limited to 64 MiB.
-Import copies mail into the local archive. Reimport to pick up additions. Identical
-bytes share a local message, and Maildir flags are refreshed on reimport. Removing
-mail from the source leaves previously imported messages available.
+Use **Mail → Import mail file…** or **Import mail folder…** to copy a snapshot
+in the background. Choose a destination archive outside the source tree. Import
+commits one message at a time, up to 64 MiB each. After an error, fix the source
+copy and retry. Identical bytes share a local message across mailboxes.
+
+- **Maildir.** Select a Maildir (its own messages land in `Imported`) or its
+  enclosing directory. Paths such as `Work/Projects/2025/{cur,new}` retain all
+  three folder names. Under a Maildir, `.Lists.Rust` maps to `Lists/Rust` and
+  mbsync's `..Lists.Rust` maps to `INBOX/Lists/Rust`. The importer copies
+  regular, non-hidden files in `cur` and `new` byte for byte and reads seen
+  and flagged from the standard `:2,` filename suffix. It skips `tmp`, symlinks,
+  and Maildir state files. Custom mbsync delimiters and flag mappings require
+  conversion before import.
+- **EML.** Individual and recursively discovered `.eml` files retain their
+  original bytes. Loose EML files in an ordinary directory tree share the
+  `Imported` mailbox.
+- **mbox.** Select an extensionless Unix spool directly. Folder imports discover
+  `.mbox`, `.mbx`, and `*.mbox/mbox`. Without a top-level `Content-Length`,
+  an unquoted line beginning with `From ` separates records. The reader removes
+  one level of mboxrd body quoting and one trailing empty framing line, if
+  present. Older mboxo files can be ambiguous when a body already contained
+  quoted From lines. With a decimal `Content-Length`, the reader copies exactly
+  that many body bytes, including literal From lines and any stored quoting.
+  Invalid lengths or framing stop the import. EML and mbox imports start as read.
+
+Reimport picks up additions and refreshes Maildir flags. The archive keeps old
+mailbox memberships after a source move or deletion, including folders that an
+earlier import flattened.
+For a consistent snapshot, import a stationary copy of the source.
 
 - `archive.sqlite3`: authoritative metadata, bodies, flags, drafts, outbox, journal.
 - `messages/<prefix>/<sha256>.eml`: immutable original bytes, verified on read.

@@ -61,6 +61,11 @@ fn run() -> Result<ExitCode> {
     } else {
         local::root()?
     };
+    if args.first().is_some_and(|command| command == "import")
+        && let Some(source) = args.get(1)
+    {
+        mail_import::check_destination(source.as_ref(), &root)?;
+    }
     std::fs::create_dir_all(&root)?;
     let lock = OpenOptions::new()
         .read(true)

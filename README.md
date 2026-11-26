@@ -93,7 +93,7 @@ just ci
   Fastmail also supports native JMAP sync and submission. [Setup and interop tests](docs/fastmail-testing.md).
 - **Sync**: folders, flags and keywords, by hand or on a timer, with original
   messages kept byte for byte.
-- **Local import** supports Maildir, Maildir++ folders, mboxrd, and individual or grouped EML files from the Mail menu and CLI.
+- **Local import** supports nested Maildir and Maildir++ folders, mboxrd and length-framed mbox, and individual or grouped EML files from the Mail menu and CLI.
 - **Reading**: threads, Correspondence, and sanitized HTML with remote images
   blocked.
 - **Search**: fields, Boolean operators, saved searches and partitions, on a
