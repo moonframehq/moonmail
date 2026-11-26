@@ -12,11 +12,15 @@ use {
     std::{path::PathBuf, sync::Arc},
 };
 
+#[path = "support/stalwart_mail.rs"]
+mod stalwart_mail;
+
 type Result<T = ()> = std::result::Result<T, Box<dyn std::error::Error>>;
 
 struct Fixture {
     _server: Option<Server>,
     endpoints: Endpoints,
+    stalwart_credentials: Option<[LoginSecret; 2]>,
     imap: native_tls::TlsConnector,
     smtp: tokio_rustls::TlsConnector,
 }
@@ -40,6 +44,35 @@ impl Fixture {
                 let ca = server.ca_der.clone();
                 (Some(server), endpoints, ca)
             };
+        Self::trusted(server, endpoints, ca, None)
+    }
+
+    fn stalwart(bearer: bool) -> Result<Self> {
+        let path = PathBuf::from(
+            std::env::var_os("MOONMAIL_STALWART_STATE")
+                .ok_or("Run just test-stalwart-imap-smtp")?,
+        );
+        let credentials = |user| -> Result<LoginSecret> {
+            let kind = if bearer { "TOKEN" } else { "PASSWORD" };
+            Ok(LoginSecret {
+                value: std::env::var(format!("MOONMAIL_STALWART_{user}_{kind}"))?.into(),
+                bearer,
+            })
+        };
+        Self::trusted(
+            None,
+            serde_json::from_slice(&std::fs::read(path.join("ready.json"))?)?,
+            std::fs::read(path.join("ca.der"))?,
+            Some([credentials("ALICE")?, credentials("BOB")?]),
+        )
+    }
+
+    fn trusted(
+        server: Option<Server>,
+        endpoints: Endpoints,
+        ca: Vec<u8>,
+        stalwart_credentials: Option<[LoginSecret; 2]>,
+    ) -> Result<Self> {
         let imap = native_tls::TlsConnector::builder()
             .disable_built_in_roots(true)
             .add_root_certificate(native_tls::Certificate::from_der(&ca)?)
@@ -55,13 +88,21 @@ impl Fixture {
         Ok(Self {
             _server: server,
             endpoints,
+            stalwart_credentials,
             imap,
             smtp: Arc::new(config).into(),
         })
     }
 
     fn peer(&self, index: usize, mode: TlsMode) -> Result<Peer> {
-        let mut account = Account::preset(Provider::Other, ACCOUNTS[index])?;
+        let (address, secret) = match &self.stalwart_credentials {
+            Some(credentials) => (
+                ["alice@moonmail.example.org", "bob@moonmail.example.org"][index],
+                credentials[index].clone(),
+            ),
+            None => (ACCOUNTS[index], secret()),
+        };
+        let mut account = Account::preset(Provider::Other, address)?;
         account.imap_host = "localhost".into();
         account.smtp_host = "localhost".into();
         account.imap_tls = mode;
@@ -73,6 +114,7 @@ impl Fixture {
         };
         Ok(Peer {
             account,
+            secret,
             root: tempfile::tempdir()?,
         })
     }
@@ -80,7 +122,7 @@ impl Fixture {
     fn incoming(&self, peer: &Peer) -> Result<RustImap> {
         Ok(RustImap::connect_with_tls(
             &peer.account,
-            &secret(),
+            &peer.secret,
             &self.imap,
         )?)
     }
@@ -119,6 +161,7 @@ fn secret() -> LoginSecret {
 }
 struct Peer {
     account: Account,
+    secret: LoginSecret,
     root: tempfile::TempDir,
 }
 struct TrustedSubmission<'a> {
@@ -168,7 +211,7 @@ impl Peer {
             &mut TrustedSubmission {
                 smtp: SmtpSubmission {
                     account: self.account.clone(),
-                    secret: secret(),
+                    secret: self.secret.clone(),
                 },
                 fixture,
             },
@@ -186,6 +229,16 @@ impl Peer {
     }
 
     fn observe(&self, raw: &[u8], role: MailboxRole) -> Result<moonmail_core::MessageId> {
+        self.find_observed(raw, role, false)?
+            .ok_or_else(|| "Missing remote copy".into())
+    }
+
+    fn find_observed(
+        &self,
+        raw: &[u8],
+        role: MailboxRole,
+        smtp_trace: bool,
+    ) -> Result<Option<moonmail_core::MessageId>> {
         let archive = Archive::open(self.root.path())?;
         let folder = archive.role_mailbox(&self.account.email, role)?;
         let rfc_id = StalwartParser::default()
@@ -202,15 +255,52 @@ impl Peer {
                 r.get::<_, i64>(0)
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
+        if ids.is_empty() {
+            return Ok(None);
+        }
         assert_eq!(ids.len(), 1, "expected exactly one observed remote copy");
         let id = moonmail_core::MessageId(u64::try_from(ids[0])?);
         let actual = FileBlobs::new(self.root.path()).get(&archive.message_blob(id)?)?;
+        // SMTP relays prepend transport headers. The frozen MIME must still be
+        // byte-identical, including its headers, attachments, and dot-stuffed body.
+        let actual = if smtp_trace && role == MailboxRole::Inbox {
+            let start = actual
+                .windows(raw.len())
+                .position(|w| w == raw)
+                .ok_or("Delivered MIME differs from frozen message")?;
+            assert!(
+                !actual[..start].windows(4).any(|w| w == b"\r\n\r\n"),
+                "Transport headers ended before frozen MIME"
+            );
+            &actual[start..]
+        } else {
+            actual.as_slice()
+        };
         // mail-send terminates DATA with an additional CRLF before the dot.
         assert!(
             actual == raw || actual == [raw, b"\r\n"].concat(),
             "received MIME bytes changed beyond SMTP framing"
         );
-        Ok(id)
+        Ok(Some(id))
+    }
+}
+
+fn await_copy(
+    fixture: &Fixture,
+    peer: &Peer,
+    raw: &[u8],
+    role: MailboxRole,
+) -> Result<moonmail_core::MessageId> {
+    let until = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    loop {
+        fixture.sync(peer)?;
+        if let Some(id) = peer.find_observed(raw, role, fixture.stalwart_credentials.is_some())? {
+            return Ok(id);
+        }
+        if std::time::Instant::now() >= until {
+            return Err("IMAP delivery deadline expired".into());
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
     }
 }
 
@@ -220,7 +310,7 @@ fn round_trip(fixture: &Fixture, mode: TlsMode, server_sent: bool) -> Result {
     for peer in [&a, &b] {
         SmtpSubmission {
             account: peer.account.clone(),
-            secret: secret(),
+            secret: peer.secret.clone(),
         }
         .check_connection_with_tls(fixture.smtp.clone())?;
         fixture.sync(peer)?;
@@ -240,9 +330,17 @@ fn round_trip(fixture: &Fixture, mode: TlsMode, server_sent: bool) -> Result {
         }],
         ..Default::default()
     };
+    let watcher = if fixture.stalwart_credentials.is_some() {
+        Some(stalwart_mail::watch(fixture, &b)?)
+    } else {
+        None
+    };
     let (a_outbox, raw) = a.send(fixture, &draft, server_sent)?;
-    fixture.sync(&b)?;
-    let received = b.observe(&raw, MailboxRole::Inbox)?;
+    let received = if let Some((worker, checkpoint)) = watcher {
+        stalwart_mail::pushed(worker, checkpoint, &b, &raw)?
+    } else {
+        await_copy(fixture, &b, &raw, MailboxRole::Inbox)?
+    };
     let attachments = MailparseParser.attachments(&raw)?;
     assert_eq!(attachments.len(), 1);
     assert_eq!(MailparseParser.attachment(&raw, &attachments[0].id)?, bytes);
@@ -272,8 +370,8 @@ fn round_trip(fixture: &Fixture, mode: TlsMode, server_sent: bool) -> Result {
         fixture.sync(&a)?;
         fixture.sync(&b)?;
     }
-    a.observe(&response, MailboxRole::Inbox)?;
-    b.observe(&raw, MailboxRole::Inbox)?;
+    await_copy(fixture, &a, &response, MailboxRole::Inbox)?;
+    await_copy(fixture, &b, &raw, MailboxRole::Inbox)?;
     a.observe(&raw, MailboxRole::Sent)?;
     b.observe(&response, MailboxRole::Sent)?;
     for (peer, id) in [(&a, a_outbox), (&b, b_outbox)] {
@@ -284,6 +382,25 @@ fn round_trip(fixture: &Fixture, mode: TlsMode, server_sent: bool) -> Result {
             item.sent_copy_state,
             if server_sent { "server" } else { "saved" }
         );
+    }
+    if fixture.stalwart_credentials.is_some() {
+        stalwart_mail::verify_edits(fixture, &a, &b, received)?;
+    }
+    Ok(())
+}
+
+#[test]
+#[ignore = "requires an independent loopback Stalwart, run just test-stalwart-imap-smtp"]
+fn stalwart_imap_smtp() -> Result {
+    for bearer in [false, true] {
+        let fixture = Fixture::stalwart(bearer)?;
+        for mode in [TlsMode::Implicit, TlsMode::Starttls] {
+            round_trip(&fixture, mode, false)?;
+            println!(
+                "Verified bidirectional delivery, IDLE and mailbox edits over {mode:?} with {}",
+                if bearer { "OAuth" } else { "passwords" }
+            );
+        }
     }
     Ok(())
 }

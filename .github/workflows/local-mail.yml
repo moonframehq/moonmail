@@ -44,3 +44,5 @@ jobs:
         run: python3 scripts/test_maild_docker.py moonmail-test-maild:ci
       - name: Verify two-account JMAP delivery, push, and edits with Stalwart
         run: python3 scripts/test_stalwart.py
+      - name: Verify IMAP and SMTP against Stalwart with both TLS modes
+        run: python3 -B scripts/test_stalwart_imap.py

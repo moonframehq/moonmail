@@ -118,3 +118,7 @@ test-mail-docker: test-mail-image
 # Disposable Stalwart with two synthetic OAuth accounts on loopback.
 test-stalwart:
     python3 scripts/test_stalwart.py
+
+# Real independent server with two accounts and validated implicit TLS and STARTTLS.
+test-stalwart-imap-smtp:
+    python3 -B scripts/test_stalwart_imap.py

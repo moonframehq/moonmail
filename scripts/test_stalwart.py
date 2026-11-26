@@ -60,7 +60,7 @@ def request(url, *, auth=None, body=None, form=None):
 
 def provision(base, admin, user):
     address = f"{user}@{DOMAIN}"
-    password = secrets.token_urlsafe(32)
+    password = secrets.token_hex(32)
     principal = {"type": "individual", "name": address, "emails": [address],
                  "roles": ["user"], "secrets": [password]}
     created = request(base + "/api/principal", auth=admin, body=principal)
@@ -76,20 +76,22 @@ def provision(base, admin, user):
         "grant_type": "urn:ietf:params:oauth:grant-type:device_code",
         "client_id": client_id, "device_code": device["device_code"],
     })
-    return grant["access_token"]
+    return password, grant["access_token"]
 
 
-def run(root):
+def run(root, *, setup_mail=None):
     executable = binary(root)
     with socket.socket() as sock:
         sock.bind(("127.0.0.1", 0))
         port = sock.getsockname()[1]
+        mail_listeners = setup_mail(root) if setup_mail else ""
     base = f"http://127.0.0.1:{port}"
-    password = secrets.token_urlsafe(32)
+    password = secrets.token_hex(32)
     with zipfile.ZipFile(root / "web.zip", "w") as web:
         web.writestr("index.html", "Moonmail test")
     config = root / "config.toml"
     config.write_text(f'''
+{mail_listeners}
 server.hostname = "127.0.0.1"
 server.listener.http.bind = "127.0.0.1:{port}"
 server.listener.http.protocol = "http"
@@ -128,7 +130,16 @@ webadmin.resource = "file://{root}/web.zip"
         env = os.environ.copy()
         env["MOONMAIL_STALWART_URL"] = base + "/jmap/session"
         for user in ("alice", "bob"):
-            env[f"MOONMAIL_STALWART_{user.upper()}_TOKEN"] = provision(base, admin, user)
+            secret, token = provision(base, admin, user)
+            env[f"MOONMAIL_STALWART_{user.upper()}_TOKEN"] = token
+            if mail_listeners:
+                env[f"MOONMAIL_STALWART_{user.upper()}_PASSWORD"] = secret
+        if mail_listeners:
+            env["MOONMAIL_STALWART_STATE"] = str(root)
+            subprocess.run(["cargo", "test", "--locked", "-p", "moonmail-network", "--test",
+                            "local_mail", "--", "--ignored", "--exact", "stalwart_imap_smtp", "--nocapture"],
+                           check=True, env=env)
+            return
         print("Stalwart ready. Two synthetic accounts have independent bearer grants.", flush=True)
         subprocess.run(["cargo", "test", "--locked", "-p", "moonmail-network", "--test",
                         "stalwart", "--", "--include-ignored",
