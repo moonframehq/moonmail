@@ -93,7 +93,7 @@ fn plan(db: &Connection, account: &str, edit: FolderEdit, remote: bool) -> Resul
                 "Folder edits support at most 1000 descendant folders",
             ));
         }
-        if remote
+        if remote && !db.query_row("SELECT EXISTS(SELECT 1 FROM jmap_accounts WHERE account=?1 AND folder_state IS NOT NULL)",[account],|r|r.get::<_,bool>(0))?
             && members
                 .iter()
                 .any(|member| member.selectable && member.epoch == 0)
@@ -249,7 +249,7 @@ impl Archive {
     /// UID in the account rejects local edits, including retired message origins.
     pub fn edit_local_folder(&mut self, account: &str, edit: FolderEdit) -> Result<()> {
         let tx = self.connection.transaction()?;
-        let remote:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM mailboxes WHERE account=?1 AND epoch<>0) OR EXISTS(SELECT 1 FROM messages WHERE account=?1 AND origin LIKE 'imap:%') OR EXISTS(SELECT 1 FROM occurrences o JOIN mailboxes b ON b.id=o.mailbox_id WHERE b.account=?1 AND o.uid IS NOT NULL)",[account],|row|row.get(0))?;
+        let remote:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM jmap_accounts WHERE account=?1) OR EXISTS(SELECT 1 FROM mailboxes WHERE account=?1 AND epoch<>0) OR EXISTS(SELECT 1 FROM messages WHERE account=?1 AND origin LIKE 'imap:%') OR EXISTS(SELECT 1 FROM occurrences o JOIN mailboxes b ON b.id=o.mailbox_id WHERE b.account=?1 AND o.uid IS NOT NULL)",[account],|row|row.get(0))?;
         if remote {
             return Err(Error::Invalid(
                 "Remote folders must be edited through queued server operations",

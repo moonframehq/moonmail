@@ -53,3 +53,5 @@ pub use {
     saved_searches::SavedSearch,
     sync_inventory::{GmailMetadata, InventoryKind, SyncCheckpoint, SyncFlags, SyncMessage},
 };
+mod jmap;
+pub use jmap::JmapFolder;

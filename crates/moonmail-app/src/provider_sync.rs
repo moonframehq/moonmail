@@ -1,6 +1,17 @@
 use super::*;
 
 impl Mail {
+    pub(super) fn start_jmap_edits(&mut self) -> Result<bool> {
+        if Account::load_all(&self.root)?
+            .iter()
+            .any(|account| account.transport == moonmail_network::Transport::Jmap)
+        {
+            self.launch(|root, _| Ok(moonmail_network::sync_jmap_edits(&root)?))?;
+            return Ok(true);
+        }
+        Ok(false)
+    }
+
     pub(super) fn start_sync(&mut self, manual: bool) -> Result<()> {
         let cancel = Arc::new(AtomicBool::new(false));
         let worker_cancel = cancel.clone();

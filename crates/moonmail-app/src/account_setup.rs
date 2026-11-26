@@ -30,11 +30,14 @@ pub fn provider(name: &str) -> Result<moonmail_network::Provider> {
 #[cfg(target_os = "macos")]
 pub fn prompt_password(email: &str) -> Result<moonmail_network::SecretString> {
     let output = std::process::Command::new("/usr/bin/osascript")
-        .args(["-e", "on run argv\nset answer to display dialog (\"Enter the app password for \" & item 1 of argv) with title \"Connect to Moonmail\" default answer \"\" with hidden answer buttons {\"Cancel\", \"Connect\"} default button \"Connect\" cancel button \"Cancel\"\nreturn text returned of answer\nend run", email])
+        .args(["-e", "on run argv\nset answer to display dialog (\"Enter the account credential for \" & item 1 of argv) with title \"Connect to Moonmail\" default answer \"\" with hidden answer buttons {\"Cancel\", \"Connect\"} default button \"Connect\" cancel button \"Cancel\"\nreturn text returned of answer\nend run", email])
         .output()?;
     anyhow::ensure!(output.status.success(), "Account connection cancelled");
     use moonmail_network::ExposeSecret;
-    let password = moonmail_network::SecretString::from(String::from_utf8(output.stdout)?);
+    let password = moonmail_network::SecretString::from(
+        String::from_utf8(output.stdout)
+            .map_err(|_| anyhow::anyhow!("Invalid credential encoding"))?,
+    );
     let entered = password.expose_secret().trim_end_matches('\n');
     anyhow::ensure!(!entered.is_empty(), "Enter an app password");
     Ok(entered.into())

@@ -9,6 +9,8 @@ pub struct Account {
     pub email: String,
     #[serde(default)]
     pub provider: Provider,
+    #[serde(default)]
+    pub transport: Transport,
     pub imap_host: String,
     pub imap_port: u16,
     #[serde(default)]
@@ -23,6 +25,14 @@ pub struct Account {
     pub smtp_username: String,
     #[serde(default)]
     pub sent_copy: SentCopy,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Transport {
+    #[default]
+    Imap,
+    Jmap,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -111,6 +121,7 @@ impl Account {
         Ok(Self {
             email: email.to_owned(),
             provider,
+            transport: Transport::Imap,
             imap_host: imap.into(),
             imap_port: 993,
             imap_tls: TlsMode::Implicit,
@@ -145,6 +156,9 @@ impl Account {
 
     pub fn validate(&self) -> Result<()> {
         validate_address(&self.email)?;
+        if self.transport == Transport::Jmap && self.provider != Provider::Fastmail {
+            return Err(Error::Invalid("JMAP requires a Fastmail account"));
+        }
         for host in [&self.imap_host, &self.smtp_host] {
             if host.is_empty()
                 || host.len() > 253
@@ -175,9 +189,26 @@ impl Account {
     /// Preflight registry validation before any browser or credential operation.
     pub fn check_registration(&self, root: &Path) -> Result<()> {
         let mut accounts = Self::load_all(root)?;
+        if let Some(previous) = accounts.iter().find(|a| a.email == self.email) {
+            self.check_transport_change(root, previous)?;
+        }
         accounts.retain(|account| account.email != self.email);
         accounts.push(self.clone());
         Self::validate_accounts(&accounts)
+    }
+
+    fn check_transport_change(&self, root: &Path, previous: &Self) -> Result<()> {
+        if previous.transport != self.transport && root.join("archive.sqlite3").exists() {
+            let archive = moonmail_store::Archive::open(root)?;
+            if archive.mail_edits_pending(&self.email)?
+                || !archive.pending_sent_copies(&self.email)?.is_empty()
+            {
+                return Err(Error::Invalid(
+                    "Sync queued edits and Sent copies before changing mail transport",
+                ));
+            }
+        }
+        Ok(())
     }
 
     pub fn load(root: &Path) -> Result<Option<Self>> {
@@ -215,6 +246,7 @@ impl Account {
             .iter_mut()
             .find(|account| account.email == self.email)
         {
+            self.check_transport_change(root, account)?;
             *account = self.clone();
         } else {
             accounts.push(self.clone());

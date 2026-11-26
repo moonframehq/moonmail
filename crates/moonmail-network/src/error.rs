@@ -4,6 +4,13 @@ pub enum Error {
     Cancelled,
     #[error("Sync is incomplete: {0} messages exceed the 64 MiB download limit")]
     IncompleteSync(usize),
+    #[error(transparent)]
+    Jmap(#[from] crate::jmap::JmapError),
+    #[error(transparent)]
+    JmapDelivery(
+        #[from]
+        crate::DeliveryError<crate::jmap_submission::SubmissionError, moonmail_store::BlobError>,
+    ),
     #[error("mail connection failed")]
     Imap(#[from] imap::Error),
     #[error("TLS connection failed")]

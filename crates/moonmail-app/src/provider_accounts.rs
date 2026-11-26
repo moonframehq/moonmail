@@ -47,9 +47,8 @@ impl Mail {
             let account = Account::load_for(&self.root, &text("account"))?
                 .context("Choose a connected account")?;
             return self.launch(move |_, progress| {
-                let _ = progress.try_send(Event::Progress(
-                    "Checking IMAP and SMTP authentication…".into(),
-                ));
+                let _ =
+                    progress.try_send(Event::Progress("Checking account authentication…".into()));
                 let secret = Auth::new(Keychain).credentials_for(&account)?;
                 moonmail_network::check_account(&account, &secret)?;
                 Ok(())
@@ -66,6 +65,11 @@ impl Mail {
                     "starttls" => Ok(moonmail_network::TlsMode::Starttls),
                     _ => bail!("Choose TLS or STARTTLS"),
                 }
+            };
+            account.transport = match value("transport") {
+                "" | "imap" => moonmail_network::Transport::Imap,
+                "jmap" => moonmail_network::Transport::Jmap,
+                _ => bail!("Unknown mail transport"),
             };
             account.imap_host = value("imap_host").to_owned();
             account.smtp_host = value("smtp_host").to_owned();
@@ -97,25 +101,31 @@ impl Mail {
                 "Use provider defaults for browser sign-in; custom servers use password sign-in"
             );
         }
-        account.check_registration(&self.root)?;
         let password_login = action == "account_password";
         self.launch(move |root, progress| {
+            account.check_registration(&root)?;
             let auth = Auth::new(Keychain);
             let secret = if password_login {
                 moonmail_network::LoginSecret {
-                    bearer: false,
+                    bearer: account.transport == moonmail_network::Transport::Jmap,
                     value: crate::account_setup::prompt_password(&email)?,
                 }
             } else {
-                auth.authorize_provider(provider, &email)?;
+                if provider == moonmail_network::Provider::Fastmail {
+                    auth.authorize_fastmail(&email, account.transport)?;
+                } else {
+                    auth.authorize_provider(provider, &email)?;
+                }
                 auth.credentials_for(&account)?
             };
-            let _ = progress.try_send(Event::Progress(
-                "Checking IMAP and SMTP authentication…".into(),
-            ));
+            let _ = progress.try_send(Event::Progress("Checking account authentication…".into()));
             moonmail_network::check_account(&account, &secret)?;
             if password_login {
-                auth.password(&email, secret.value.clone())?;
+                if secret.bearer {
+                    auth.api_token(&email, secret.value)?;
+                } else {
+                    auth.password(&email, secret.value)?;
+                }
             }
             account.save(&root)?;
             Ok(())

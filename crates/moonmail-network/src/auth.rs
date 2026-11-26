@@ -72,6 +72,7 @@ struct Record {
 #[derive(Deserialize)]
 struct Discovery {
     issuer: String,
+    protected_resources: Option<Vec<String>>,
     registration_endpoint: String,
     authorization_endpoint: String,
     token_endpoint: String,
@@ -145,12 +146,25 @@ impl<C: CredentialStore> Auth<C> {
     }
 
     pub fn password(&self, email: &str, password: SecretString) -> Result<(), AuthError<C::Error>> {
+        self.save_static(email, password, "")
+    }
+
+    pub fn api_token(&self, email: &str, token: SecretString) -> Result<(), AuthError<C::Error>> {
+        self.save_static(email, token, "fastmail-jmap")
+    }
+
+    fn save_static(
+        &self,
+        email: &str,
+        password: SecretString,
+        provider: &str,
+    ) -> Result<(), AuthError<C::Error>> {
         let _lock = self.store.lock(email).map_err(AuthError::Credentials)?;
         self.save(
             email,
             &Record {
                 password,
-                provider: String::new(),
+                provider: provider.into(),
                 client_secret: empty_secret(),
                 client_id: String::new(),
                 access_token: empty_secret(),
@@ -162,6 +176,20 @@ impl<C: CredentialStore> Auth<C> {
     }
 
     pub fn authorize(&self, email: &str) -> Result<(), AuthError<C::Error>> {
+        self.authorize_fastmail(email, crate::Transport::Imap)
+    }
+
+    pub fn authorize_fastmail(
+        &self,
+        email: &str,
+        transport: crate::Transport,
+    ) -> Result<(), AuthError<C::Error>> {
+        let scope = match transport {
+            crate::Transport::Imap => "urn:ietf:params:oauth:scope:mail offline_access",
+            crate::Transport::Jmap => {
+                "urn:ietf:params:jmap:core urn:ietf:params:jmap:mail urn:ietf:params:jmap:submission offline_access"
+            },
+        };
         let _lock = self.store.lock(email).map_err(AuthError::Credentials)?;
         let client = self.client()?;
         let metadata = self.discovery(&client)?;
@@ -171,11 +199,16 @@ impl<C: CredentialStore> Auth<C> {
             "http://127.0.0.1:{}/oauth/fastmail",
             listener.local_addr()?.port()
         );
-        let registration:Registration=client.post(&metadata.registration_endpoint).json(&serde_json::json!({
-            "client_name":"Moonmail", "application_type":"native", "redirect_uris":[redirect],
-            "grant_types":["authorization_code","refresh_token"], "response_types":["code"],
-            "token_endpoint_auth_method":"none", "scope":"urn:ietf:params:oauth:scope:mail offline_access"
-        })).send()?.error_for_status()?.json()?;
+        let registration: Registration = client
+            .post(&metadata.registration_endpoint)
+            .json(&serde_json::json!({
+                "client_name":"Moonmail", "application_type":"native", "redirect_uris":[redirect],
+                "grant_types":["authorization_code","refresh_token"], "response_types":["code"],
+                "token_endpoint_auth_method":"none", "scope":scope
+            }))
+            .send()?
+            .error_for_status()?
+            .json()?;
         let (challenge, verifier) = PkceCodeChallenge::new_random_sha256();
         let state = CsrfToken::new_random();
         let mut url = url::Url::parse(&metadata.authorization_endpoint)?;
@@ -183,15 +216,45 @@ impl<C: CredentialStore> Auth<C> {
             ("client_id", registration.client_id.as_str()),
             ("redirect_uri", redirect.as_str()),
             ("response_type", "code"),
-            ("scope", "urn:ietf:params:oauth:scope:mail offline_access"),
+            ("scope", scope),
             ("code_challenge", challenge.as_str()),
             ("code_challenge_method", "S256"),
             ("state", state.secret()),
             ("prompt", "consent"),
             ("login_hint", email),
-            ("resource", "imap.fastmail.com"),
-            ("resource", "smtp.fastmail.com"),
         ]);
+        if transport == crate::Transport::Imap {
+            url.query_pairs_mut().extend_pairs([
+                ("resource", "imap.fastmail.com"),
+                ("resource", "smtp.fastmail.com"),
+            ]);
+        } else {
+            let endpoint = url::Url::parse(crate::jmap::SESSION)?;
+            let resource = if let Some(resources) = &metadata.protected_resources {
+                resources
+                    .iter()
+                    .filter_map(|resource| {
+                        let parsed = url::Url::parse(resource).ok()?;
+                        let prefix = parsed.path().trim_end_matches('/');
+                        let suffix = endpoint.path().strip_prefix(prefix)?;
+                        (parsed.origin() == endpoint.origin()
+                            && parsed.username().is_empty()
+                            && parsed.password().is_none()
+                            && parsed.fragment().is_none()
+                            && parsed.query().is_none()
+                            && (suffix.is_empty() || suffix.starts_with('/')))
+                        .then_some((prefix.len(), resource.as_str()))
+                    })
+                    .max_by_key(|(length, _)| *length)
+                    .ok_or(AuthError::Protocol(
+                        "Fastmail does not advertise its JMAP resource",
+                    ))?
+                    .1
+            } else {
+                crate::jmap::SESSION
+            };
+            url.query_pairs_mut().append_pair("resource", resource);
+        }
         open::that(url.as_str())?;
         let code = receive_code(&listener, state.secret(), &redirect, Provider::Fastmail)?;
         let tokens: Tokens = client
@@ -266,15 +329,25 @@ impl<C: CredentialStore> Auth<C> {
         let mut record: Record = serde_json::from_str(json.expose_secret())?;
         if !matches!(
             record.provider.as_str(),
-            "" | "fastmail" | "google" | "microsoft"
+            "" | "fastmail" | "fastmail-jmap" | "google" | "microsoft"
         ) {
             return Err(AuthError::Protocol(
                 "Unrecognized credential provider; reconnect the account",
             ));
         }
         if !record.password.expose_secret().is_empty() {
+            let jmap = record.provider == "fastmail-jmap";
+            if jmap
+                != account.is_some_and(|a| {
+                    a.transport == crate::Transport::Jmap && a.provider == Provider::Fastmail
+                })
+            {
+                return Err(AuthError::Protocol(
+                    "Reconnect with credentials for this transport",
+                ));
+            }
             return Ok(LoginSecret {
-                bearer: false,
+                bearer: jmap,
                 value: record.password.clone(),
             });
         }

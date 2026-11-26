@@ -323,8 +323,18 @@ fn sync_connected_account(
     if cancelled() {
         return Err(Error::Cancelled);
     }
-    let mut incoming = RustImap::connect(account, &secret)?;
     let mut archive = Archive::open(root)?;
+    if account.transport == crate::Transport::Jmap {
+        return crate::jmap::Client::fastmail(secret.value)?.sync(
+            &account.email,
+            &mut archive,
+            &FileBlobs::new(root),
+            progress,
+            cancelled,
+        );
+    }
+    let mut incoming = RustImap::connect(account, &secret)?;
+    archive.invalidate_jmap(&account.email)?;
     synchronize_cancellable(
         &mut incoming,
         account,
@@ -361,6 +371,19 @@ fn sync_connected_account(
                 id,
             )
             .map_err(|error| Error::SentCopyPending(Box::new(error)))?;
+        }
+    }
+    Ok(())
+}
+
+/// Drain interactive edits for connected JMAP accounts on the existing network worker.
+pub fn sync_jmap_edits(root: &Path) -> Result<()> {
+    let archive = Archive::open(root)?;
+    for account in Account::load_all(root)? {
+        if account.transport == crate::Transport::Jmap
+            && archive.mail_edits_pending(&account.email)?
+        {
+            sync_connected_account(root, &account, |_| {}, || false)?;
         }
     }
     Ok(())
