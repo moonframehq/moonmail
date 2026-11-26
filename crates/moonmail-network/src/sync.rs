@@ -122,8 +122,9 @@ fn synchronize_prioritized<I: IncomingMail>(
     };
     let mut draft_error = None;
     let mut skipped = 0usize;
-    folders.sort_by_key(|folder| folder.name.eq_ignore_ascii_case("INBOX"));
-    let mut inbox_selected = None;
+    // Hydrate the inbox before processing potentially large archives.
+    folders.sort_by_key(|folder| !folder.name.eq_ignore_ascii_case("INBOX"));
+    let mut inbox_to_watch = None;
     crate::remote_drafts::deletions(incoming, &account.email, archive, &cancelled)?;
     for folder in folders {
         let mailbox = archive.mailbox(&account.email, &folder.name)?;
@@ -141,7 +142,7 @@ fn synchronize_prioritized<I: IncomingMail>(
         )?;
         skipped += missed;
         if folder.name.eq_ignore_ascii_case("INBOX") {
-            inbox_selected = Some(folder.name.clone());
+            inbox_to_watch = Some(folder.name.clone());
         }
         if drafts == Some(mailbox) {
             match crate::remote_drafts::sync(
@@ -166,7 +167,7 @@ fn synchronize_prioritized<I: IncomingMail>(
     if skipped > 0 {
         Err(SyncError::Incomplete(skipped))
     } else {
-        Ok(inbox_selected)
+        Ok(inbox_to_watch)
     }
 }
 
@@ -437,7 +438,7 @@ pub(crate) fn sync_session(
     cancelled: impl Fn() -> bool,
     writes_waiting: impl Fn() -> bool,
 ) -> Result<Option<String>> {
-    let inbox_selected = synchronize_prioritized(
+    let inbox_to_watch = synchronize_prioritized(
         incoming,
         account,
         archive,
@@ -462,7 +463,7 @@ pub(crate) fn sync_session(
                 .map_err(|error| Error::SentCopyPending(Box::new(error)))?;
         }
     }
-    Ok(inbox_selected)
+    Ok(inbox_to_watch)
 }
 
 impl From<SyncError<Error>> for Error {

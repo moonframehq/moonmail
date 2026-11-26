@@ -297,8 +297,11 @@ impl Control {
             if matches!(result, Err(Error::Cancelled)) {
                 continue;
             }
-            let inbox_selected = result?;
-            let mut changed = imap.session.take_all_unsolicited().any(mailbox_changed);
+            let inbox_to_watch = result?;
+            // Folder scans and Sent-copy work may have selected another mailbox.
+            // Reconcile INBOX once when entering IDLE to cover arrivals during that work.
+            imap.session.take_all_unsolicited().for_each(drop);
+            let mut changed = true;
             if archive.has_queued_keywords(&account.email)? {
                 continue;
             }
@@ -312,7 +315,7 @@ impl Control {
                 continue;
             }
             let interval = Duration::from_secs(u64::from(minutes) * 60);
-            if idle && let Some(inbox) = inbox_selected {
+            if idle && let Some(inbox) = inbox_to_watch {
                 let end = Instant::now() + interval;
                 while self.command() == NONE && Instant::now() < end {
                     if changed {
