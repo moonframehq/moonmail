@@ -109,9 +109,10 @@ pub fn dispatch(root: &Path, args: &[String]) -> Result<bool> {
             println!("Search projection rebuilt.");
         },
         "import" => {
-            let path = Path::new(args.get(1).context(
-                "Usage: moonmail import PATH (Maildir, mboxrd, .eml file or directory)",
-            )?);
+            let path =
+                Path::new(args.get(1).context(
+                    "Usage: moonmail import PATH (Maildir, mbox, .eml file or directory)",
+                )?);
             let count = crate::mail_import::from_path(path, root)?;
             crate::local::index_all(root)?;
             println!("Imported {count} messages.");
