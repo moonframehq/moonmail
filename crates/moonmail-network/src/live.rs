@@ -180,7 +180,8 @@ impl Control {
 
     fn connected_jmap(&self, root: &Path, account: &Account, failures: &mut u32) -> Result<()> {
         let secret = Auth::new(Keychain).credentials_for(account)?;
-        let client = Arc::new(crate::jmap::Client::fastmail(secret.value)?);
+        let mut client = Arc::new(crate::jmap::Client::fastmail(secret.value)?);
+        let mut refreshed = false;
         let mut archive = Archive::open(root)?;
         let blobs = moonmail_store::FileBlobs::new(root);
         let mut watcher = None;
@@ -195,13 +196,27 @@ impl Control {
                 return Ok(());
             }
             self.emit(LiveStatus::Syncing);
-            client.sync(
+            let result = client.sync(
                 &account.email,
                 &mut archive,
                 &blobs,
                 |_| {},
                 || self.command() >= PAUSE,
-            )?;
+            );
+            if !refreshed
+                && matches!(
+                    result,
+                    Err(Error::Jmap(crate::jmap::JmapError::Unauthorized))
+                )
+            {
+                watcher = None;
+                let secret = Auth::new(Keychain).credentials_for(account)?;
+                client = Arc::new(crate::jmap::Client::fastmail(secret.value)?);
+                refreshed = true;
+                continue;
+            }
+            result?;
+            refreshed = false;
             *failures = 0;
             let minutes = self.minutes.load(Ordering::Acquire);
             if minutes == 0 {

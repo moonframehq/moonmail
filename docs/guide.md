@@ -575,8 +575,7 @@ live views; original bytes remain in the archive.
 
 ## Current limits
 
-- Up to 32 accounts per archive; macOS Keychain persistence only. Google/Microsoft
-  browser sign-in requires imported desktop client configuration. No POP3/EWS support.
+- Up to 32 accounts per archive; macOS Keychain persistence only. Google browser sign-in uses a packaged or imported client. Microsoft uses an imported desktop client. No POP3/EWS support.
 - Sync fixes the UID upper bound at SELECT. Full inventories use UID SEARCH and
   fetch metadata for up to 700 existing UIDs per command. With CONDSTORE, matching
   UIDVALIDITY, UIDNEXT and HIGHESTMODSEQ skip the inventory. Changed mailboxes use

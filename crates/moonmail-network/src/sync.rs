@@ -137,7 +137,7 @@ fn synchronize_prioritized<I: IncomingMail>(
             blobs,
             &folder.name,
             &mut progress,
-            &cancelled,
+            cancelled,
         )?;
         skipped += missed;
         if folder.name.eq_ignore_ascii_case("INBOX") {

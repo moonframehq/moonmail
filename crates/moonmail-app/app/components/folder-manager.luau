@@ -9,6 +9,10 @@ local function build(props)
 		if not known[value] then known[value] = true; table.insert(accounts, value) end
 	end
 	table.sort(accounts)
+	local imap = false
+	for _, config in mail.account_details or {} do
+		if config.email == account then imap = config.transport ~= "jmap"; break end
+	end
 	local choices = {}
 	for _, value in accounts do table.insert(choices, ui.button { label = value, small = true, msg = { folder_account = value }, variant = if value == account then "primary" else "ghost" }) end
 	local items = {
@@ -33,7 +37,7 @@ local function build(props)
 		if folder.account ~= account then continue end
 		table.insert(items, ui.row { padding = "small", shrink = false, align = "center",
 			ui.column { grow = true, ui.text { folder.name, weight = "semibold", truncate = true }, ui.text { tostring(folder.total) .. " downloaded messages" .. (if not folder.selectable then " · structural folder" else ""), tone = "muted", size = "small" } },
-			if folder.selectable and not mail.demo and account ~= "local" then ui.button { label = if folder.sync_enabled then "Pause sync" else "Enable sync", small = true, msg = { action = "folder_sync", id = folder.id, enabled = not folder.sync_enabled } } else nil,
+			if imap and folder.selectable and not mail.demo then ui.button { label = if folder.sync_enabled then "Pause sync" else "Enable sync", small = true, msg = { action = "folder_sync", account = account, id = folder.id, enabled = not folder.sync_enabled } } else nil,
 			ui.button { label = "Rename…", small = true, disabled = string.lower(folder.name) == "inbox", msg = { folder_edit = folder, mode = "rename" } },
 			ui.button { label = "Delete…", small = true, disabled = string.lower(folder.name) == "inbox", msg = { folder_edit = folder, mode = "delete" } },
 		})

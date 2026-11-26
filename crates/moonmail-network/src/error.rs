@@ -61,6 +61,11 @@ impl Error {
     /// explicit intervention. Submission errors never qualify.
     pub fn retryable_sync(&self) -> bool {
         match self {
+            Self::Jmap(crate::jmap::JmapError::Http(e)) => {
+                e.is_timeout()
+                    || e.status()
+                        .is_some_and(|s| s.is_server_error() || s.as_u16() == 429)
+            },
             Self::AccountSync { source, .. } => source.retryable_sync(),
             Self::Imap(imap::Error::ConnectionLost | imap::Error::Bye(_) | imap::Error::Io(_)) => {
                 true

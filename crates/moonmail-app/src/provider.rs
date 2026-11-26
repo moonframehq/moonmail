@@ -669,7 +669,19 @@ impl Mail {
                     .get("enabled")
                     .and_then(Data::as_bool)
                     .context("Choose sync preference")?;
+                let account = text("account");
+                anyhow::ensure!(
+                    Account::load_for(&self.root, &account)?
+                        .is_some_and(|a| a.transport == moonmail_network::Transport::Imap)
+                        && self
+                            .archive()?
+                            .mailboxes()?
+                            .iter()
+                            .any(|folder| folder.id == id && folder.account == account),
+                    "Choose a folder on a connected IMAP account"
+                );
                 self.archive()?.set_sync_enabled(id, enabled)?;
+                self.workers.flush(&account);
                 self.refresh()?;
             },
             "folder_role" => {

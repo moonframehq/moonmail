@@ -523,6 +523,28 @@ fn remote_draft_round_trip_replace_pull_send_and_discard() -> Result {
 }
 
 #[test]
+fn incremental_drafts_keep_untouched_messages() -> Result {
+    let fixture = Fixture::new(false, false)?;
+    let peer = fixture.peer(0, TlsMode::Implicit)?;
+    let mut session = fixture.incoming(&peer)?;
+    session.append_draft("Drafts", b"Subject: earlier\r\n\r\none")?;
+    fixture.sync(&peer)?;
+    let archive = Archive::open(peer.root.path())?;
+    let first = archive.latest_draft()?.ok_or("missing original draft")?;
+    session.append_draft("Drafts", b"Subject: later\r\n\r\ntwo")?;
+    fixture.sync(&peer)?;
+    assert_eq!(archive.draft_count()?, 2);
+    assert_eq!(
+        archive
+            .draft(&first.id)?
+            .ok_or("original draft retired")?
+            .subject,
+        "earlier"
+    );
+    Ok(())
+}
+
+#[test]
 fn permanent_delete_is_bound_to_folder_epoch_and_confirmed_uids() -> Result {
     use moonmail_store::DeletionTarget;
     let fixture = Fixture::new(false, false)?;

@@ -190,6 +190,8 @@ impl Archive {
         Ok(self.connection.query_row("SELECT EXISTS(SELECT 1 FROM flag_operations f JOIN mailboxes b ON b.id=f.mailbox_id WHERE b.account=?1 )
             OR EXISTS(SELECT 1 FROM keyword_operations k JOIN mailboxes b ON b.id=k.mailbox_id WHERE b.account=?1 AND k.state='queued')
             OR EXISTS(SELECT 1 FROM move_operations m JOIN mailboxes b ON b.id=m.source_id WHERE b.account=?1 AND m.state='queued')
+            OR EXISTS(SELECT 1 FROM expunge_operations WHERE account=?1 AND state IN ('queued','running','unknown'))
+            OR EXISTS(SELECT 1 FROM draft_uploads WHERE account=?1)
             OR EXISTS(SELECT 1 FROM folder_operations WHERE account=?1 AND state='queued')",[account],|r|r.get(0))?)
     }
 }

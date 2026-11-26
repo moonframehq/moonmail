@@ -38,6 +38,7 @@ impl Mail {
             role,
             target,
         )?;
+        self.workers.flush(account);
         self.status = format!("{count} permanent deletions queued for Sync");
         Ok(())
     }

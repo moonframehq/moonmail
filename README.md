@@ -93,6 +93,7 @@ just ci
   Fastmail also supports native JMAP sync and submission. [Setup and interop tests](docs/fastmail-testing.md).
 - **Sync**: folders, flags and keywords, by hand or on a timer, with original
   messages kept byte for byte.
+- **Local import** supports Maildir, Maildir++ folders, mboxrd, and individual or grouped EML files from the Mail menu and CLI.
 - **Reading**: threads, Correspondence, and sanitized HTML with remote images
   blocked.
 - **Search**: fields, Boolean operators, saved searches and partitions, on a
@@ -109,11 +110,9 @@ just ci
 - It has not been proven against real accounts: tests use synthetic mail and a
   local mail server, so expect rough edges with your provider.
 - It runs on macOS only, and there is no signed release.
-- Sign in with Google or Microsoft needs your own imported OAuth client. Gmail
-  also works with an app password.
-- INBOX supports IMAP IDLE. Folder reconciliation scans UID metadata and has
-  not been benchmarked on a million-message account. CONDSTORE and QRESYNC remain unimplemented.
-- No POP3, Exchange (EWS) or Microsoft Graph, and no Gmail-specific labels.
+- Google sign-in uses a packaged or imported desktop OAuth client. Microsoft uses an imported client. Gmail also supports app passwords.
+- INBOX supports IMAP IDLE. Folder reconciliation supports CONDSTORE and QRESYNC. Million-message account performance is unmeasured.
+- POP3, Exchange (EWS) and Microsoft Graph are unsupported. Gmail supports label edits and shared bodies across folders.
 - Composing is plain text. Sync exchanges drafts with the account’s mapped Drafts folder.
 - Only one composer window at a time.
 - Local mail is not encrypted by Moonmail, so rely on disk encryption.

@@ -1,8 +1,8 @@
 # Fastmail JMAP
 
-In Internet Accounts, choose Fastmail, open Server settings, and select JMAP. Sign in with Fastmail or use an API token with core, mail, and submission access. Accounts saved without a transport continue to use IMAP and SMTP. Reconnect to change transport. Finish pending server operations before switching. Each protocol maintains its own remote message identities.
+In Internet Accounts, choose Fastmail, open Server settings, and select JMAP. Sign in with Fastmail or use an API token with core, mail, and submission access. Accounts saved without a transport continue to use IMAP and SMTP. Reconnect to change transport. Finish pending server operations before switching. Each protocol maintains its own remote message identities. JMAP sync covers the whole account. Choose IMAP to pause individual folders, synchronize editable drafts, or use the confirmed Empty Trash and Empty Junk commands.
 
-The initial scan saves immutable MIME once per email and tracks all mailbox memberships. Subsequent syncs request mailbox and email changes together with metadata for created and updated IDs. The EventSource stream is available on the network client for background-worker integration. The app currently receives remote changes on scheduled or manual sync. Local JMAP edits wake the network worker.
+The initial scan saves immutable MIME once per email and tracks all mailbox memberships. Subsequent syncs request mailbox and email changes together with metadata for created and updated IDs. With automatic sync enabled, the account worker listens for Email and Mailbox state changes over EventSource and reconciles missed notifications at the configured interval. Local JMAP edits wake the network worker.
 
 ## Offline verification
 
