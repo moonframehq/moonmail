@@ -50,11 +50,31 @@ pub fn synchronize_cancellable<I: IncomingMail>(
     account: &Account,
     archive: &mut Archive,
     blobs: &FileBlobs,
-    mut progress: impl FnMut(String),
+    progress: impl FnMut(String),
     cancelled: impl Fn() -> bool,
 ) -> std::result::Result<(), SyncError<I::Error>> {
+    synchronize_prioritized(
+        incoming,
+        account,
+        archive,
+        blobs,
+        progress,
+        cancelled,
+        || false,
+    )
+    .map(|_| ())
+}
+
+fn synchronize_prioritized<I: IncomingMail>(
+    incoming: &mut I,
+    account: &Account,
+    archive: &mut Archive,
+    blobs: &FileBlobs,
+    mut progress: impl FnMut(String),
+    cancelled: impl Fn() -> bool,
+    writes_waiting: impl Fn() -> bool,
+) -> std::result::Result<Option<String>, SyncError<I::Error>> {
     check_cancel(&cancelled)?;
-    let parser = StalwartParser::default();
     let mut folders = incoming.folders().map_err(SyncError::Incoming)?;
     check_cancel(&cancelled)?;
     publish_folders(archive, &account.email, &folders)?;
@@ -73,74 +93,41 @@ pub fn synchronize_cancellable<I: IncomingMail>(
     }
     crate::keywords::apply(incoming, &account.email, archive, &mut progress, &cancelled)?;
     crate::moves::apply_moves(incoming, &account.email, archive, &mut progress, &cancelled)?;
+    // Flush durable writes before downloading any bodies. Probe the exact UID
+    // and its epoch on the selected mailbox before issuing STORE.
+    for operation in archive.pending_flags(&account.email)? {
+        check_cancel(&cancelled)?;
+        let source = incoming
+            .select_uid(&operation.mailbox, operation.uid)
+            .map_err(SyncError::Incoming)?;
+        if source.epoch == operation.epoch && source.exists {
+            incoming
+                .flag(operation.uid, &operation.kind, operation.value)
+                .map_err(SyncError::Incoming)?;
+        }
+        archive.acknowledge_flag(&operation)?;
+    }
+    // Yield inventory to writes only after finishing in-flight transfers.
+    let cancelled = || cancelled() || writes_waiting();
     let mut skipped = 0usize;
+    // Leave INBOX selected for the live worker. Re-selecting after the scan
+    // would open a gap in which an arrival could be missed.
+    folders.sort_by_key(|folder| folder.name.eq_ignore_ascii_case("INBOX"));
+    let inbox_selected = folders
+        .last()
+        .filter(|f| f.selectable && f.name.eq_ignore_ascii_case("INBOX"))
+        .map(|f| f.name.clone());
     for folder in folders {
-        progress(format!("Checking {}", folder.name));
-        check_cancel(&cancelled)?;
-        let mailbox = archive.mailbox(&account.email, &folder.name)?;
-        if !folder.selectable {
-            continue;
-        }
-        let epoch = inventory(incoming, archive, mailbox, &folder.name, &cancelled)?;
-        let mut changed_flags = false;
-        for operation in archive
-            .pending_flags(&account.email)?
-            .into_iter()
-            .filter(|op| op.mailbox == folder.name)
-        {
-            check_cancel(&cancelled)?;
-            if operation.epoch == epoch {
-                incoming
-                    .flag(operation.uid, &operation.kind, operation.value)
-                    .map_err(SyncError::Incoming)?;
-                changed_flags = true;
-            }
-            // Reconcile using the local desired flags below; a subsequent sync
-            // obtains the post-STORE server snapshot.
-            archive.acknowledge_flag(&operation)?;
-        }
-        check_cancel(&cancelled)?;
-        let epoch = if changed_flags {
-            inventory(incoming, archive, mailbox, &folder.name, &cancelled)?
-        } else {
-            epoch
-        };
-        let mut before = u64::from(u32::MAX) + 1;
-        loop {
-            check_cancel(&cancelled)?;
-            let messages = archive.missing_sync_messages(before)?;
-            if messages.is_empty() {
-                break;
-            }
-            for message in messages {
-                before = u64::from(message.uid);
-                check_cancel(&cancelled)?;
-                if message.size > 64 * 1024 * 1024 {
-                    skipped += 1;
-                    progress(format!("Skipped UID {}: exceeds 64 MiB", message.uid));
-                    continue;
-                }
-                if let Some(raw) = incoming.fetch(message.uid).map_err(SyncError::Incoming)? {
-                    check_cancel(&cancelled)?;
-                    archive.ingest_with_keywords(
-                        &parser,
-                        blobs,
-                        IncomingMessage {
-                            account: &account.email,
-                            mailbox,
-                            origin: &format!("imap:{mailbox}:{epoch}:{}", message.uid),
-                            epoch,
-                            uid: Some(message.uid),
-                            seen: message.seen,
-                            starred: message.starred,
-                            received_at: message.received_at,
-                            raw: &raw,
-                        },
-                        &message.keywords,
-                    )?;
-                    progress(format!("Downloaded {} · UID {}", folder.name, message.uid));
-                }
-            }
+        if folder.selectable {
+            skipped += sync_folder(
+                incoming,
+                account,
+                archive,
+                blobs,
+                &folder.name,
+                &mut progress,
+                cancelled,
+            )?;
         }
     }
     check_cancel(&cancelled)?;
@@ -148,8 +135,64 @@ pub fn synchronize_cancellable<I: IncomingMail>(
     if skipped > 0 {
         Err(SyncError::Incomplete(skipped))
     } else {
-        Ok(())
+        Ok(inbox_selected)
     }
+}
+
+/// Refresh one selected mailbox after a push using its durable UID inventory.
+pub(crate) fn sync_folder<I: IncomingMail>(
+    incoming: &mut I,
+    account: &Account,
+    archive: &mut Archive,
+    blobs: &FileBlobs,
+    folder: &str,
+    mut progress: impl FnMut(String),
+    cancelled: impl Fn() -> bool,
+) -> std::result::Result<usize, SyncError<I::Error>> {
+    let mut skipped = 0;
+    let parser = StalwartParser::default();
+    progress(format!("Checking {folder}"));
+    check_cancel(&cancelled)?;
+    let mailbox = archive.mailbox(&account.email, folder)?;
+    let epoch = inventory(incoming, archive, mailbox, folder, &cancelled)?;
+    let mut before = u64::from(u32::MAX) + 1;
+    loop {
+        check_cancel(&cancelled)?;
+        let messages = archive.missing_sync_messages(before)?;
+        if messages.is_empty() {
+            break;
+        }
+        for message in messages {
+            before = u64::from(message.uid);
+            check_cancel(&cancelled)?;
+            if message.size > 64 * 1024 * 1024 {
+                skipped += 1;
+                progress(format!("Skipped UID {}: exceeds 64 MiB", message.uid));
+                continue;
+            }
+            if let Some(raw) = incoming.fetch(message.uid).map_err(SyncError::Incoming)? {
+                check_cancel(&cancelled)?;
+                archive.ingest_with_keywords(
+                    &parser,
+                    blobs,
+                    IncomingMessage {
+                        account: &account.email,
+                        mailbox,
+                        origin: &format!("imap:{mailbox}:{epoch}:{}", message.uid),
+                        epoch,
+                        uid: Some(message.uid),
+                        seen: message.seen,
+                        starred: message.starred,
+                        received_at: message.received_at,
+                        raw: &raw,
+                    },
+                    &message.keywords,
+                )?;
+                progress(format!("Downloaded {} · UID {}", folder, message.uid));
+            }
+        }
+    }
+    Ok(skipped)
 }
 
 fn publish_folders(
@@ -220,16 +263,55 @@ pub fn sync_account_cancellable(
     if accounts.is_empty() {
         return Err(Error::Invalid("Connect an account first"));
     }
-    // One connection-owning worker visits accounts in registration order. Stop
-    // on the first failure; completed account work is already durable.
-    for account in accounts {
-        if cancelled() {
-            return Err(Error::Cancelled);
+    use std::{
+        sync::{
+            atomic::{AtomicBool, Ordering},
+            mpsc,
+        },
+        thread,
+        time::Duration,
+    };
+    let stop = AtomicBool::new(false);
+    thread::scope(|scope| {
+        let (sender, events) = mpsc::sync_channel(64);
+        for account in accounts {
+            let sender = sender.clone();
+            let stop = &stop;
+            thread::Builder::new()
+                .name("moonmail-sync".into())
+                .spawn_scoped(scope, move || {
+                    let report = |message| {
+                        let _ = sender.send(Ok(format!("{} · {message}", account.email)));
+                    };
+                    let result = sync_connected_account(root, &account, report, || {
+                        stop.load(Ordering::Acquire)
+                    });
+                    if let Err(source) = result {
+                        let _ = sender.send(Err(Error::AccountSync {
+                            account: account.email,
+                            source: Box::new(source),
+                        }));
+                    }
+                })?;
         }
-        progress(format!("Syncing {}", account.email));
-        sync_connected_account(root, &account, &mut progress, &cancelled)?;
-    }
-    Ok(())
+        drop(sender);
+        let mut failure = None;
+        loop {
+            if cancelled() {
+                stop.store(true, Ordering::Release);
+            }
+            match events.recv_timeout(Duration::from_millis(100)) {
+                Ok(Ok(message)) => progress(message),
+                Ok(Err(error)) => {
+                    progress(error.to_string());
+                    failure.get_or_insert(error);
+                },
+                Err(mpsc::RecvTimeoutError::Timeout) => {},
+                Err(mpsc::RecvTimeoutError::Disconnected) => break,
+            }
+        }
+        failure.map_or(Ok(()), Err)
+    })
 }
 
 fn sync_connected_account(
@@ -244,21 +326,36 @@ fn sync_connected_account(
     }
     let mut incoming = RustImap::connect(account, &secret)?;
     let mut archive = Archive::open(root)?;
-    synchronize_cancellable(
-        &mut incoming,
+    sync_session(
+        root,
         account,
+        &mut incoming,
         &mut archive,
+        progress,
+        cancelled,
+        || false,
+    )
+    .map(|_| ())
+}
+
+pub(crate) fn sync_session(
+    root: &Path,
+    account: &Account,
+    incoming: &mut RustImap,
+    archive: &mut Archive,
+    progress: impl FnMut(String),
+    cancelled: impl Fn() -> bool,
+    writes_waiting: impl Fn() -> bool,
+) -> Result<Option<String>> {
+    let inbox_selected = synchronize_prioritized(
+        incoming,
+        account,
+        archive,
         &FileBlobs::new(root),
         progress,
         &cancelled,
-    )
-    .map_err(|error| match error {
-        SyncError::Incoming(error) => error,
-        SyncError::Store(error) => error.into(),
-        SyncError::Ingest(error) => error.into(),
-        SyncError::Cancelled => Error::Cancelled,
-        SyncError::Incomplete(count) => Error::IncompleteSync(count),
-    })?;
+        writes_waiting,
+    )?;
     loop {
         if cancelled() {
             return Err(Error::Cancelled);
@@ -271,15 +368,21 @@ fn sync_connected_account(
             if cancelled() {
                 return Err(Error::Cancelled);
             }
-            crate::sent_copy::save_native(
-                &mut incoming,
-                account,
-                &archive,
-                &FileBlobs::new(root),
-                id,
-            )
-            .map_err(|error| Error::SentCopyPending(Box::new(error)))?;
+            crate::sent_copy::save_native(incoming, account, archive, &FileBlobs::new(root), id)
+                .map_err(|error| Error::SentCopyPending(Box::new(error)))?;
         }
     }
-    Ok(())
+    Ok(inbox_selected)
+}
+
+impl From<SyncError<Error>> for Error {
+    fn from(error: SyncError<Error>) -> Self {
+        match error {
+            SyncError::Incoming(error) => error,
+            SyncError::Store(error) => error.into(),
+            SyncError::Ingest(error) => error.into(),
+            SyncError::Cancelled => Error::Cancelled,
+            SyncError::Incomplete(count) => Error::IncompleteSync(count),
+        }
+    }
 }

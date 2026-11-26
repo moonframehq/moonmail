@@ -10,6 +10,7 @@ mod folder_operations;
 mod folders;
 mod forwarding;
 mod identities;
+mod idle;
 mod imap_copy;
 mod imap_folders;
 mod imap_inventory;
@@ -17,6 +18,7 @@ mod imap_keywords;
 mod imap_tls;
 mod incoming;
 mod keywords;
+mod live;
 mod moves;
 mod recipients;
 mod sent_copy;
@@ -37,6 +39,7 @@ pub use {
         CopyOutcome, FolderOutcome, IncomingMail, KeywordOutcome, MoveOutcome, RemoteFolder,
         RemoteMessage, RemoteSnapshot, RemoteUid, RustImap, ScanError,
     },
+    live::{LiveAccount, LiveStatus},
     secrecy::{ExposeSecret, SecretString},
     sent_copy::{SentCopyError, save_sent_copy},
     submission::{

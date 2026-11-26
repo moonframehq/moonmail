@@ -8,7 +8,7 @@ local function build(props)
 	end
 	local items = {
 		ui.text { "Tags & IMAP keywords", class = "title" },
-		ui.text { "Edits apply to the selected messages in every live folder. Remote edits upload on Sync. Friendly labels stay local to this account.", tone = "muted" },
+		ui.text { "Edits apply to the selected messages in every live folder. Remote edits upload while sync is active. Friendly labels stay local to this account.", tone = "muted" },
 		ui.button { label = "Folder-entry rules…", small = true, msg = "rules" },
 		ui.row { ui.button { label = "Back to mail", small = true, msg = "mail" }, ui.button { label = "Sync", small = true, disabled = mail.busy or mail.demo, msg = { action = "sync" } } },
 	}
@@ -43,7 +43,7 @@ local function build(props)
 			ui.text { (if op.value then "Add " else "Remove ") .. op.keyword .. " · " .. op.mailbox .. " · UID " .. tostring(op.uid) .. " · " .. op.state },
 			if op.detail ~= "" then ui.text { op.detail, tone = "muted" } else nil,
 			if op.state == "blocked" then ui.row {
-				ui.button { label = "Retry on Sync", small = true, disabled = mail.busy, msg = { action = "keyword_retry", account = account, id = op.id } },
+				ui.button { label = "Retry", small = true, disabled = mail.busy, msg = { action = "keyword_retry", account = account, id = op.id } },
 				ui.button { label = "Discard intent", small = true, disabled = mail.busy, msg = { action = "keyword_discard", account = account, id = op.id } },
 			} else nil,
 		})

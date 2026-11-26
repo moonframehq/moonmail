@@ -210,7 +210,8 @@ pub trait IncomingMail {
 }
 
 pub struct RustImap {
-    session: imap::Session<native_tls::TlsStream<TcpStream>>,
+    pub(crate) session: imap::Session<crate::idle::IdleStream>,
+    pub(crate) wire: crate::idle::IdleStream,
     provider: Provider,
 }
 
@@ -247,7 +248,10 @@ impl RustImap {
         let timeout = Duration::from_secs(30);
         let mut socket = None;
         let mut last_error = None;
-        for address in (account.imap_host.as_str(), account.imap_port).to_socket_addrs()? {
+        for address in (account.imap_host.as_str(), account.imap_port)
+            .to_socket_addrs()
+            .map_err(imap::Error::Io)?
+        {
             match TcpStream::connect_timeout(&address, timeout) {
                 Ok(stream) => {
                     socket = Some(stream);
@@ -274,7 +278,8 @@ impl RustImap {
         let tls = connector
             .connect(&account.imap_host, socket)
             .map_err(|_| Error::Invalid("IMAP TLS handshake failed"))?;
-        let mut client = imap::Client::new(tls);
+        let wire = crate::idle::IdleStream::new(tls);
+        let mut client = imap::Client::new(wire.clone());
         if !greeted {
             client.read_greeting()?;
         }
@@ -308,13 +313,20 @@ impl RustImap {
                         xoauth2: mechanism == "XOAUTH2",
                     },
                 )
-                .map_err(|(error, _)| error)?
+                .map_err(|(error, _)| match error {
+                    imap::Error::No(_) => Error::LoginRejected,
+                    e => Error::Imap(e),
+                })?
         } else {
             client
                 .login(account.imap_login(), secret.value.expose_secret())
-                .map_err(|(error, _)| error)?
+                .map_err(|(error, _)| match error {
+                    imap::Error::No(_) => Error::LoginRejected,
+                    e => Error::Imap(e),
+                })?
         };
         Ok(Self {
+            wire,
             session,
             provider: account.provider,
         })

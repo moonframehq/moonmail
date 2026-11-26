@@ -48,6 +48,7 @@ pub struct Preferences {
     pub mark_read: bool,
     /// Zero is manual; automatic synchronization only runs while the app is open.
     pub sync_minutes: u16,
+    pub sync_paused: bool,
     pub app_icon: crate::app_icon::AppIcon,
     pub layout: crate::layout::Layout,
     pub columns: crate::columns::Columns,
@@ -62,7 +63,8 @@ impl Default for Preferences {
             reader: ReaderFont::default(),
             threaded: false,
             mark_read: true,
-            sync_minutes: 0,
+            sync_minutes: 15,
+            sync_paused: false,
             app_icon: crate::app_icon::AppIcon::default(),
             layout: crate::layout::Layout::default(),
             columns: crate::columns::Columns::default(),

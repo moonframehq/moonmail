@@ -4,7 +4,7 @@ use {
     std::{collections::HashSet, fs, io::Write, path::Path},
 };
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Account {
     pub email: String,
     #[serde(default)]

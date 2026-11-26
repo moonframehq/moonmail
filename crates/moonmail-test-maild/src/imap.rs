@@ -17,7 +17,11 @@ use {
             sequence::{SeqOrUid, Sequence, SequenceSet},
         },
     },
-    std::{collections::BTreeSet, io::Write, sync::Arc},
+    std::{
+        collections::{BTreeMap, BTreeSet},
+        io::Write,
+        sync::Arc,
+    },
 };
 
 #[derive(Default)]
@@ -25,6 +29,7 @@ struct Session {
     account: Option<String>,
     selected: Option<String>,
     readonly: bool,
+    observed: BTreeMap<u32, BTreeSet<String>>,
 }
 
 pub(crate) fn serve(wire: &mut Wire, shared: &Shared) -> Result {
@@ -36,7 +41,7 @@ pub(crate) fn serve(wire: &mut Wire, shared: &Shared) -> Result {
         match &command.body {
             CommandBody::Capability => {
                 wire.send(if wire.encrypted {
-                    "* CAPABILITY IMAP4rev1 UIDPLUS MOVE\r\n"
+                    "* CAPABILITY IMAP4rev1 UIDPLUS MOVE IDLE\r\n"
                 } else {
                     "* CAPABILITY IMAP4rev1 STARTTLS LOGINDISABLED\r\n"
                 })?;
@@ -66,6 +71,9 @@ pub(crate) fn serve(wire: &mut Wire, shared: &Shared) -> Result {
             _ if session.account.is_none() => {
                 wire.send(format!("{tag} NO TLS and login required\r\n"))?
             },
+            CommandBody::Idle if session.selected.is_some() => {
+                idle(wire, shared, &mut session, tag)?;
+            },
             _ => match execute(&command, &mut session, shared) {
                 Ok(response) => wire.send(response)?,
                 Err(Error::Invalid(reason)) => wire.send(format!("{tag} NO {reason}\r\n"))?,
@@ -73,6 +81,63 @@ pub(crate) fn serve(wire: &mut Wire, shared: &Shared) -> Result {
             },
         }
     }
+}
+
+fn idle(wire: &mut Wire, shared: &Shared, session: &mut Session, tag: &str) -> Result {
+    use std::{sync::atomic::Ordering, time::Duration};
+    let account = session
+        .account
+        .as_deref()
+        .ok_or(Error::Invalid("Login required"))?;
+    let folder = session
+        .selected
+        .as_deref()
+        .ok_or(Error::Invalid("Select a mailbox"))?;
+    wire.send("* OK starting idle\r\n+ idling\r\n")?;
+    shared.idle_started.fetch_add(1, Ordering::Release);
+    wire.idle_timeout(Duration::from_millis(40))?;
+    let mut command = Vec::new();
+    loop {
+        let current = folder_state(shared.store()?.folder(account, folder)?);
+        if current != session.observed {
+            // Descending sequence numbers stay valid as removals shift the mailbox.
+            for (index, uid) in session.observed.keys().enumerate().rev() {
+                if !current.contains_key(uid) {
+                    wire.send(format!("* {} EXPUNGE\r\n", index + 1))?;
+                }
+            }
+            if current
+                .keys()
+                .any(|uid| !session.observed.contains_key(uid))
+            {
+                wire.send(format!("* {} EXISTS\r\n", current.len()))?;
+            }
+            for (index, (uid, flags)) in current.iter().enumerate() {
+                if session.observed.get(uid).is_some_and(|old| old != flags) {
+                    let flags = flags.iter().cloned().collect::<Vec<_>>().join(" ");
+                    wire.send(format!(
+                        "* {} FETCH (UID {uid} FLAGS ({flags}))\r\n",
+                        index + 1
+                    ))?;
+                }
+            }
+            session.observed = current;
+        }
+        if wire.idle_done(&mut command)? {
+            wire.idle_timeout(Duration::from_secs(10))?;
+            wire.send(format!("{tag} OK idle completed\r\n"))?;
+            shared.idle_done.fetch_add(1, Ordering::Release);
+            return Ok(());
+        }
+    }
+}
+
+fn folder_state(folder: &crate::store::Folder) -> BTreeMap<u32, BTreeSet<String>> {
+    folder
+        .messages
+        .iter()
+        .map(|m| (m.uid, m.flags.clone()))
+        .collect()
 }
 
 fn command(wire: &mut Wire) -> Result<Command<'static>> {
@@ -175,6 +240,7 @@ fn execute(command: &Command<'_>, session: &mut Session, shared: &Shared) -> Res
                 "[READ-WRITE] "
             }
             .into();
+            session.observed = folder_state(selected);
             session.selected = Some(folder);
         },
         CommandBody::Append {

@@ -66,7 +66,19 @@ pub(crate) fn save_native(
     blobs: &FileBlobs,
     id: i64,
 ) -> Result<()> {
-    save_sent_copy(incoming, account, archive, blobs, id).map_err(|error| match error {
+    let result = save_sent_copy(incoming, account, archive, blobs, id);
+    if matches!(result, Err(SentCopyError::Ineligible)) {
+        // The explicit Send worker and live sync can observe the same pending
+        // copy. Only the winner of the durable claim may dispatch APPEND.
+        let item = archive.outbox_item(id)?;
+        if item.account == account.email
+            && item.state == "sent"
+            && matches!(item.sent_copy_state.as_str(), "copying" | "saved")
+        {
+            return Ok(());
+        }
+    }
+    result.map_err(|error| match error {
         SentCopyError::Store(error) => error.into(),
         SentCopyError::Blob(error) => error.into(),
         SentCopyError::Incoming(error) => error,

@@ -46,6 +46,8 @@ pub(crate) struct Shared {
     stop: AtomicBool,
     sockets: Mutex<BTreeMap<u64, TcpStream>>,
     next: AtomicU64,
+    pub idle_started: AtomicU64,
+    pub idle_done: AtomicU64,
 }
 impl Shared {
     pub fn store(&self) -> Result<MutexGuard<'_, Store>> {
@@ -64,6 +66,13 @@ pub struct Server {
 }
 
 impl Server {
+    /// Counts of accepted IDLE commands and clean DONE completions.
+    pub fn idle_counts(&self) -> (u64, u64) {
+        (
+            self.shared.idle_started.load(Ordering::Acquire),
+            self.shared.idle_done.load(Ordering::Acquire),
+        )
+    }
     pub fn start(config: Config) -> Result<Self> {
         let (tls, ca_der, ca_pem) = certificates()?;
         let sockets: Vec<_> = config
@@ -93,6 +102,8 @@ impl Server {
                 stop: AtomicBool::new(false),
                 sockets: Mutex::new(BTreeMap::new()),
                 next: AtomicU64::new(1),
+                idle_started: AtomicU64::default(),
+                idle_done: AtomicU64::default(),
             }),
             listeners: Vec::new(),
         };

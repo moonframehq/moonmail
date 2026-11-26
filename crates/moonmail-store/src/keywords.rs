@@ -63,6 +63,11 @@ pub(crate) fn replace_observed(
 }
 
 impl Archive {
+    /// Entry rules can queue edits during ingest, after the write phase.
+    pub fn has_queued_keywords(&self, account: &str) -> Result<bool> {
+        Ok(self.connection.query_row("SELECT EXISTS(SELECT 1 FROM keyword_operations k JOIN mailboxes b ON b.id=k.mailbox_id WHERE b.account=?1 AND k.state='queued')",[account],|row|row.get(0))?)
+    }
+
     pub fn unresolved_keyword_count(&self) -> Result<u64> {
         Ok(self
             .connection

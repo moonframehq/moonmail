@@ -71,6 +71,7 @@ impl Mail {
                     integer("revision")?,
                     &ids,
                 )?;
+                self.flush_messages(&ids)?;
                 self.refresh()?;
                 self.status = format!(
                     "Rule applied to {count} matching selected message(s); inspect rule history for blocked actions"

@@ -73,10 +73,9 @@ impl Mail {
                 let count = self
                     .archive_mut()?
                     .set_keywords(&ids, text("keyword"), value)?;
+                self.workers.flush(account);
                 self.refresh()?;
-                self.status = format!(
-                    "Updated keywords on {count} selected message(s); remote edits upload on Sync"
-                );
+                self.status = format!("Updated keywords on {count} selected message(s)");
             },
             "keyword_label" => {
                 self.archive()?
@@ -118,6 +117,7 @@ impl Mail {
                 );
                 if action == "keyword_retry" {
                     self.archive()?.retry_keyword(id)?;
+                    self.workers.flush(account);
                 } else {
                     self.archive()?.discard_keyword(id)?;
                 }

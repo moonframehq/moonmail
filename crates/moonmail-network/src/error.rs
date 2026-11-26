@@ -1,5 +1,13 @@
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
+    #[error("{account} · {source}")]
+    AccountSync {
+        account: String,
+        #[source]
+        source: Box<Error>,
+    },
+    #[error("IMAP authentication rejected; check the account credentials")]
+    LoginRejected,
     #[error("Sync cancelled; durable completed work is retained")]
     Cancelled,
     #[error("Sync is incomplete: {0} messages exceed the 64 MiB download limit")]
@@ -42,10 +50,16 @@ impl Error {
     /// explicit intervention. Submission errors never qualify.
     pub fn retryable_sync(&self) -> bool {
         match self {
-            Self::Imap(imap::Error::ConnectionLost | imap::Error::Io(_)) => true,
+            Self::AccountSync { source, .. } => source.retryable_sync(),
+            Self::Imap(imap::Error::ConnectionLost | imap::Error::Bye(_) | imap::Error::Io(_)) => {
+                true
+            },
             Self::Io(error) => matches!(
                 error.kind(),
                 std::io::ErrorKind::ConnectionRefused
+                    | std::io::ErrorKind::BrokenPipe
+                    | std::io::ErrorKind::UnexpectedEof
+                    | std::io::ErrorKind::WouldBlock
                     | std::io::ErrorKind::ConnectionReset
                     | std::io::ErrorKind::ConnectionAborted
                     | std::io::ErrorKind::NotConnected

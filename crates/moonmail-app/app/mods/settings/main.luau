@@ -23,12 +23,12 @@ local function choose_provider(state, provider, account)
 	if provider == "microsoft" and not editing then state.server_config.smtp_host = microsoft_smtp(state.email) end
 end
 
-local DEFAULTS = { interface_family = ".AppleSystemUIFont", list_family = "JetBrains Mono", font_size = "12", reader_family = "Helvetica", reader_size = "12", threaded = false, mark_read = true, sync_minutes = "0", app_icon = "wax-seal", layout = "mail" }
+local DEFAULTS = { interface_family = ".AppleSystemUIFont", list_family = "JetBrains Mono", font_size = "12", reader_family = "Helvetica", reader_size = "12", threaded = false, mark_read = true, sync_minutes = "15", app_icon = "wax-seal", layout = "mail" }
 local PAGES = { { "appearance", "Appearance", "palette", "#8b5cf6" }, { "fonts", "Fonts", "case-sensitive", "#f28b35" }, { "reading", "Reading & Lists", "list-tree", "#3894ef" }, { "sync", "Synchronization", "refresh-cw", "#3894ef" }, { "account", "Internet Accounts", "at-sign", "#3478f6" }, { "storage", "Storage", "archive", "#8b929b" } }
 local function values(p)
 	p = p or {}
 	return { interface_family = p.interface_family or DEFAULTS.interface_family, list_family = p.list_family or DEFAULTS.list_family,
-		font_size = tostring(p.font_size or 12), reader_family = (p.reader or {}).family or "Helvetica", reader_size = tostring((p.reader or {}).size or 12), threaded = p.threaded == true, mark_read = p.mark_read ~= false, sync_minutes = tostring(p.sync_minutes or 0), app_icon = p.app_icon or DEFAULTS.app_icon, layout = p.layout or DEFAULTS.layout }
+		font_size = tostring(p.font_size or 12), reader_family = (p.reader or {}).family or "Helvetica", reader_size = tostring((p.reader or {}).size or 12), threaded = p.threaded == true, mark_read = p.mark_read ~= false, sync_minutes = tostring(p.sync_minutes or 15), app_icon = p.app_icon or DEFAULTS.app_icon, layout = p.layout or DEFAULTS.layout }
 end
 local function preview(state)
 	local size = if state.font_target == "reader_family" then state.values.reader_size else state.values.font_size
@@ -236,12 +236,14 @@ return mod {
 			)
 		elseif state.page == "sync" then
 			local choices = {}
+			local accounts = {}
+			for _, status in mail.account_sync_status or {} do table.insert(accounts, caption(status)) end
 			for _, option in { { "0", "Manual" }, { "1", "1 min" }, { "5", "5 min" }, { "15", "15 min" }, { "30", "30 min" } } do
 				table.insert(choices, ui.button { label = option[2], small = true, variant = if v.sync_minutes == option[1] then "primary" else nil, msg = { sync_minutes = option[1] } })
 			end
 			content = page(
-				group(row("Check for new mail", "Runs while Moonmail is open.", nil), ui.row { padding = "normal", shrink = false, table.unpack(choices) }),
-				caption(mail.sync_schedule or "Manual sync"),
+				group(row("Refresh all folders", "INBOX receives live updates when the server supports IDLE.", nil), ui.row { padding = "normal", shrink = false, table.unpack(choices) }),
+				ui.column { gap = "small", table.unpack(accounts) },
 				caption("Transient connection failures reconnect after 30 seconds, doubling up to 15 minutes. Authentication, storage and incomplete-sync errors pause automatic sync until you use Sync."),
 				caption("Stop Sync waits for the current command and pauses automatic sync. Queued messages require an explicit Send."),
 				ui.row { action("Sync now", "sync"), action("Stop Sync", "cancel_sync") }
