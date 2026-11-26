@@ -133,6 +133,8 @@ pub enum SortField {
 #[derive(Clone, Debug, Default)]
 pub struct MailQuery {
     pub mailbox: Option<i64>,
+    /// Restrict to messages owned by one account, across all its mailboxes.
+    pub account: Option<String>,
     pub filter: ViewFilter,
     pub before: Option<PageCursor>,
     /// Optional explicit ID restriction, independent of the search snapshot.

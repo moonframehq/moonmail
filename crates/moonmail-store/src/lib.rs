@@ -13,6 +13,7 @@ mod keywords;
 mod mailboxes;
 mod maildir;
 mod moves;
+mod msgvault;
 mod operations;
 mod outbox;
 mod partitions;
@@ -47,6 +48,7 @@ pub use {
     keywords::{KeywordLabel, KeywordOperation},
     maildir::{MaildirAccount, MaildirFile, MaildirLocation},
     moves::{MoveOperation, MoveTarget},
+    msgvault::{MsgvaultAccount, MsgvaultChange, MsgvaultState},
     operations::PendingFlag,
     outbox::{OutboxItem, OutboxPage},
     partitions::{PartitionBucket, PartitionField, PartitionPage},

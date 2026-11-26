@@ -208,6 +208,16 @@ local folder_icons = { INBOX = "inbox", Inbox = "inbox", Sent = "send", ["Sent M
 local folder_colors = { INBOX = "accent", Inbox = "accent", Sent = "accent", ["Sent Mail"] = "accent", Archive = "muted-foreground", Drafts = "muted-foreground", Junk = "muted-foreground", Spam = "muted-foreground", Trash = "muted-foreground" }
 local folder_badges = { INBOX = "#3478f6", Inbox = "#3478f6", Sent = "#3894ef", ["Sent Mail"] = "#3894ef", Archive = "#8b929b", Drafts = "#8b929b", Junk = "#8b929b", Spam = "#8b929b", Trash = "#8b929b" }
 
+-- msgvault mirrors are named "msgvault ADDRESS"; keep the source visible when truncated.
+local function account_label(account)
+	local address = string.match(account, "^msgvault (.+)$")
+	return if address then "msgvault · " .. address else account
+end
+
+local function account_icon(account)
+	return if string.match(account, "^msgvault ") then "database" else "at-sign"
+end
+
 local function mailbox_row(layout, label, icon, icon_color, badge_bg, count, selected, msg)
 	local row_height = if layout == "moonmail" then 32 elseif layout == "mail" then 30 else 28
 	local row_class = if layout == "moonmail" then "mailbox-row-moonmail" elseif layout == "mail" then "mailbox-row-mail" else "mailbox-row"
@@ -237,7 +247,7 @@ local function folder_nodes(layout, children, nodes, state, mail, depth, use_bad
 		local branch = #(node.children or {}) > 0
 		local closed = state.closed[node.key] == true
 		local icon = node.icon or folder_icons[node.name] or "folder"
-		local icon_color = if node.icon == "at-sign" then "muted-foreground" else (folder_colors[node.name] or "muted-foreground")
+		local icon_color = if node.icon == "at-sign" or node.icon == "database" then "muted-foreground" else (folder_colors[node.name] or "muted-foreground")
 		local badge_bg = if use_badges and depth == 0 then folder_badges[node.name] else nil
 		local glyph
 		if layout == "moonmail" and badge_bg then
@@ -249,13 +259,14 @@ local function folder_nodes(layout, children, nodes, state, mail, depth, use_bad
 				ui.icon { name = icon, style = { font_size = if layout == "mailmate" then 14 else 15, color = icon_color } },
 			}
 		end
-		table.insert(children, ui.row { height = row_height, shrink = false, align = "center", gap = "none", class = row_class, selected = node.id ~= nil and mail.mailbox == node.id and state.pane == "mail",
-			msg = if node.id then { action = "folder", id = node.id } elseif branch then { folder_toggle = node.key } else nil,
+		local selected = state.pane == "mail" and ((node.id ~= nil and mail.mailbox == node.id) or (node.account ~= nil and mail.account == node.account and not mail.mailbox))
+		local msg = if node.id then { action = "folder", id = node.id } elseif node.account then { action = "account", account = node.account } elseif branch then { folder_toggle = node.key } else nil
+		table.insert(children, ui.row { height = row_height, shrink = false, align = "center", gap = "none", class = row_class, selected = selected, msg = msg,
 			if depth > 0 or branch then ui.row { width = depth * 14 + 14, shrink = false, justify = "end", align = "center",
 				if branch then ui.row { width = 14, height = row_height, align = "center", msg = { folder_toggle = node.key }, ui.icon { name = if closed then "chevron-right" else "chevron-down", style = { font_size = 11, color = "muted-foreground" } } } else nil,
 			} else nil,
 			ui.row { width = 28, shrink = false, align = "center", glyph },
-			ui.column { grow = true, ui.text { if node.name == "INBOX" then "Inbox" else node.name, truncate = true } },
+			ui.column { grow = true, ui.text { if node.account then account_label(node.account) elseif node.name == "INBOX" then "Inbox" else node.name, truncate = true } },
 			if node.unread and node.unread > 0 then ui.text { tostring(node.unread), class = "mailbox-count" } else nil,
 		})
 		if branch and not closed then folder_nodes(layout, children, node.children, state, mail, depth + 1, false) end
@@ -452,6 +463,7 @@ return mod {
 			total_unread += folder.unread
 			if mail.mailbox == folder.id then title = if folder.name == "INBOX" then "Inbox" else folder.name end
 		end
+		if mail.account and not mail.mailbox then title = account_label(mail.account) end
 		for _, saved in mail.saved_searches or {} do
 			if saved.id == mail.active_saved_search then title = saved.name .. (if mail.partition_value then " · " .. mail.partition_value else "") end
 		end
@@ -459,14 +471,14 @@ return mod {
 		local label_class = if layout == "mailmate" then "sidebar-label" else "sidebar-label-mail"
 		local sidebar = {
 			ui.text { if layout == "mail" then "Favorites" else "Mailboxes", class = label_class },
-			mailbox_row(layout, "All Messages", "mails", "accent", "#5856d6", total_unread, not mail.mailbox and state.pane == "mail" and mail.filter == "all", { action = "folder", id = 0 }),
+			mailbox_row(layout, "All Messages", "mails", "accent", "#5856d6", total_unread, not mail.mailbox and not mail.account and state.pane == "mail" and mail.filter == "all", { action = "folder", id = 0 }),
 		}
 		for _, name in { "INBOX", "Archive", "Sent", "Junk", "Trash" } do
 			local children = {}
 			local unread = 0
 			for _, folder in mail.mailboxes or {} do
 				if folder.role == string.lower(name) and folder.selectable then
-					table.insert(children, { key = "shortcut:" .. tostring(folder.id), name = folder.account, id = folder.id, unread = folder.unread, icon = "at-sign" })
+					table.insert(children, { key = "shortcut:" .. tostring(folder.id), name = account_label(folder.account), id = folder.id, unread = folder.unread, icon = account_icon(folder.account) })
 					unread += folder.unread
 				end
 			end
@@ -487,7 +499,7 @@ return mod {
 		table.insert(sidebar, mailbox_row(layout, "Move & Folders", "folder-open", "muted-foreground", nil, nil, state.pane == "organize", "organize"))
 		table.insert(sidebar, ui.text { if layout == "mailmate" then "Sources" else "Accounts", class = label_class })
 		local sources = table.clone(mail.folder_tree or {})
-		for _, source in sources do source.icon = "at-sign" end
+		for _, source in sources do source.icon = account_icon(source.name) end
 		folder_nodes(layout, sidebar, sources, state, mail, 0, false)
 		if #sources == 0 then table.insert(sidebar, mailbox_row(layout, "Connect an account…", "at-sign", "muted-foreground", nil, nil, state.pane == "settings", "settings")) end
 		local related = table.clone((mail.related or {}).rows or {})

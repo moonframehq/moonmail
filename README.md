@@ -94,6 +94,7 @@ just ci
 - **Sync**: folders, flags and keywords, by hand or on a timer, with original
   messages kept byte for byte.
 - **Live Maildir** shares a local mail tree with Mutt and mbsync. Connect it from the Mail menu to follow deliveries, moves, expunges and flag changes. [Shared Maildir setup](docs/guide.md#share-a-live-maildir-with-mutt-and-mbsync).
+- **msgvault** archives are found automatically in `$MSGVAULT_HOME` or `~/.msgvault` and mirrored read-only, one account per email source, with msgvault's folders, read state and deletions kept current. [msgvault setup](docs/guide.md#see-a-msgvault-archive).
 - **Local import** supports nested Maildir and Maildir++ folders, mboxrd and length-framed mbox, and individual or grouped EML files from the Mail menu and CLI.
 - **Reading**: threads, Correspondence, and sanitized HTML with remote images
   blocked.
