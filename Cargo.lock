@@ -5381,6 +5381,7 @@ dependencies = [
  "rpassword",
  "rusqlite",
  "rustls",
+ "rustls-platform-verifier",
  "secrecy",
  "security-framework",
  "serde",

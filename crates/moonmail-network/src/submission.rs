@@ -1,11 +1,12 @@
 use {
     crate::{
         Account, Error, ExposeSecret, LoginSecret, Provider, Result, SecretString, TlsMode,
-        oauth_bearer, validate_address,
+        auth::account_bearer, validate_address,
     },
     moonmail_core::BlobStore,
     moonmail_store::Draft,
-    std::{collections::HashSet, time::Duration},
+    rustls_platform_verifier::BuilderVerifierExt,
+    std::{collections::HashSet, sync::Arc, time::Duration},
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -17,7 +18,7 @@ pub enum SubmitError {
     #[error("SMTP delivery outcome is uncertain; check Sent before composing a replacement")]
     Unknown(#[source] mail_send::Error),
     #[error("SMTP TLS configuration failed: {0}")]
-    Configuration(String),
+    Configuration(#[from] rustls::Error),
     #[error("SMTP runtime failed")]
     Runtime(#[from] std::io::Error),
 }
@@ -93,7 +94,7 @@ impl SmtpSubmission {
             .build()?
             .block_on(async {
                 let mut client = builder.connect().await.map_err(SubmitError::Connect)?;
-                self.authenticate_external(&mut client)
+                self.authenticate_bearer(&mut client)
                     .await
                     .map_err(SubmitError::Connect)?;
                 client
@@ -132,7 +133,7 @@ impl SmtpSubmission {
             .build()?
             .block_on(async {
                 let mut client = builder.connect().await.map_err(SubmitError::Connect)?;
-                self.authenticate_external(&mut client)
+                self.authenticate_bearer(&mut client)
                     .await
                     .map_err(SubmitError::Connect)?;
                 Ok(())
@@ -146,90 +147,81 @@ impl SmtpSubmission {
         self.account
             .validate()
             .map_err(|error| SubmitError::Account(Box::new(error)))?;
-        let credentials = if self.secret.bearer
-            && matches!(
-                self.account.provider,
-                Provider::Google | Provider::Microsoft
-            ) {
-            mail_send::Credentials::new_xoauth2(
-                self.account.smtp_login().to_owned(),
-                self.secret.value.expose_secret().to_owned(),
-            )
-        } else if self.secret.bearer {
-            mail_send::Credentials::new_oauth(
-                oauth_bearer(
-                    &self.account.smtp_host,
-                    self.account.smtp_port,
-                    &self.secret.value,
-                )
-                .expose_secret()
-                .to_owned(),
-            )
-        } else {
-            mail_send::Credentials::new(
-                self.account.smtp_login().to_owned(),
-                self.secret.value.expose_secret().to_owned(),
-            )
+        let connector = match connector {
+            Some(connector) => connector,
+            None => {
+                // HTTP and SMTP enable different rustls providers in the same binary.
+                let config = rustls::ClientConfig::builder_with_provider(Arc::new(
+                    rustls::crypto::aws_lc_rs::default_provider(),
+                ))
+                .with_safe_default_protocol_versions()?
+                .with_platform_verifier()?
+                .with_no_client_auth();
+                Arc::new(config).into()
+            },
         };
-        let builder = if let Some(connector) = connector {
-            mail_send::SmtpClientBuilder::new_with_tls_connector(
-                self.account.smtp_host.clone(),
-                self.account.smtp_port,
-                connector,
-            )
-        } else {
-            mail_send::SmtpClientBuilder::new(
-                self.account.smtp_host.clone(),
-                self.account.smtp_port,
-            )
-            .map_err(SubmitError::Configuration)?
-        }
+        let builder = mail_send::SmtpClientBuilder::new_with_tls_connector(
+            self.account.smtp_host.clone(),
+            self.account.smtp_port,
+            connector,
+        )
         .implicit_tls(self.account.smtp_tls == TlsMode::Implicit)
         .timeout(Duration::from_secs(30));
-        Ok(if self.external_oauth() {
+        Ok(if self.secret.bearer {
             builder
         } else {
-            builder.credentials(credentials)
+            builder.credentials(mail_send::Credentials::new(
+                self.account.smtp_login().to_owned(),
+                self.secret.value.expose_secret().to_owned(),
+            ))
         })
     }
 
-    fn external_oauth(&self) -> bool {
-        self.secret.bearer
-            && matches!(
-                self.account.provider,
-                Provider::Google | Provider::Microsoft
-            )
-    }
-
-    async fn authenticate_external<T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin>(
+    async fn authenticate_bearer<T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin>(
         &self,
         client: &mut mail_send::SmtpClient<T>,
     ) -> std::result::Result<(), mail_send::Error> {
-        if !self.external_oauth() {
+        if !self.secret.bearer {
             return Ok(());
         }
         use base64::Engine;
-        let payload = SecretString::from(format!(
-            "user={}\x01auth=Bearer {}\x01\x01",
-            self.account.smtp_login(),
-            self.secret.value.expose_secret()
+        let (mechanism, payload, acknowledgement) = match self.account.provider {
+            Provider::Google | Provider::Microsoft => (
+                "XOAUTH2",
+                SecretString::from(format!(
+                    "user={}\x01auth=Bearer {}\x01\x01",
+                    self.account.smtp_login(),
+                    self.secret.value.expose_secret()
+                )),
+                "\r\n",
+            ),
+            _ => (
+                "OAUTHBEARER",
+                account_bearer(
+                    self.account.smtp_login(),
+                    &self.account.smtp_host,
+                    self.account.smtp_port,
+                    &self.secret.value,
+                ),
+                "AQ==\r\n",
+            ),
+        };
+        tracing::debug!(mechanism, "authenticating SMTP connection");
+        let command = SecretString::from(format!(
+            "AUTH {mechanism} {}\r\n",
+            base64::engine::general_purpose::STANDARD.encode(payload.expose_secret())
         ));
-        let reply = client
-            .cmd(format!(
-                "AUTH XOAUTH2 {}\r\n",
-                base64::engine::general_purpose::STANDARD.encode(payload.expose_secret())
-            ))
-            .await?;
+        let reply = client.cmd(command.expose_secret().as_bytes()).await?;
         if reply.code() == 235 {
             return Ok(());
         }
-        // Gmail's JSON failure challenge requires an empty response. The
-        // pinned mail-send adapter otherwise repeats the initial credential.
+        // Acknowledge a SASL failure challenge without replaying the credential.
         let reply = if reply.code() == 334 {
-            client.cmd(b"\r\n").await?
+            client.cmd(acknowledgement.as_bytes()).await?
         } else {
             reply
         };
+        tracing::warn!(mechanism, code = reply.code(), "SMTP authentication failed");
         Err(mail_send::Error::AuthenticationFailed(reply))
     }
 }
@@ -243,55 +235,71 @@ mod oauth_tests {
     };
 
     #[test]
-    fn xoauth2_smtp_succeeds_or_terminates_error_challenge_without_resending_credentials()
+    fn bearer_smtp_succeeds_or_terminates_error_challenge_without_resending_credentials()
     -> std::result::Result<(), Box<dyn std::error::Error>> {
-        for success in [true, false] {
-            let listener = std::net::TcpListener::bind(("127.0.0.1", 0))?;
-            let address = listener.local_addr()?;
-            let server = std::thread::spawn(move || -> std::io::Result<()> {
-                let (mut socket, _) = listener.accept()?;
-                socket.set_read_timeout(Some(Duration::from_secs(5)))?;
-                let mut reader = BufReader::new(socket.try_clone()?);
-                let mut command = String::new();
-                reader.read_line(&mut command)?;
-                let payload = command
-                    .trim_end()
-                    .strip_prefix("AUTH XOAUTH2 ")
-                    .ok_or_else(|| std::io::Error::other("wrong mechanism"))?;
-                assert_eq!(
-                    base64::engine::general_purpose::STANDARD
-                        .decode(payload)
-                        .map_err(std::io::Error::other)?,
-                    b"user=me@example.org\x01auth=Bearer synthetic\x01\x01"
-                );
-                if success {
-                    socket.write_all(b"235 2.7.0 accepted\r\n")?;
-                } else {
-                    socket.write_all(b"334 eyJzdGF0dXMiOiI0MDEifQ==\r\n")?;
-                    command.clear();
+        for (provider, prefix, expected, acknowledgement) in [
+            (
+                Provider::Fastmail,
+                "AUTH OAUTHBEARER ",
+                "n,a=me@example.org,\x01host=smtp.fastmail.com\x01port=465\x01auth=Bearer synthetic\x01\x01",
+                "AQ==\r\n",
+            ),
+            (
+                Provider::Google,
+                "AUTH XOAUTH2 ",
+                "user=me@example.org\x01auth=Bearer synthetic\x01\x01",
+                "\r\n",
+            ),
+        ] {
+            for success in [true, false] {
+                let listener = std::net::TcpListener::bind(("127.0.0.1", 0))?;
+                let address = listener.local_addr()?;
+                let server = std::thread::spawn(move || -> std::io::Result<()> {
+                    let (mut socket, _) = listener.accept()?;
+                    socket.set_read_timeout(Some(Duration::from_secs(5)))?;
+                    let mut reader = BufReader::new(socket.try_clone()?);
+                    let mut command = String::new();
                     reader.read_line(&mut command)?;
-                    assert_eq!(command, "\r\n");
-                    socket.write_all(b"535 5.7.1 authentication failed\r\n")?;
-                }
-                Ok(())
-            });
-            let smtp = SmtpSubmission {
-                account: Account::preset(Provider::Google, "me@example.org")?,
-                secret: LoginSecret {
-                    bearer: true,
-                    value: "synthetic".into(),
-                },
-            };
-            let result = tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()?
-                .block_on(async {
-                    let mut client =
-                        mail_send::SmtpClient::connect(address, Duration::from_secs(5)).await?;
-                    smtp.authenticate_external(&mut client).await
+                    let payload = command
+                        .trim_end()
+                        .strip_prefix(prefix)
+                        .ok_or_else(|| std::io::Error::other("wrong mechanism"))?;
+                    assert_eq!(
+                        base64::engine::general_purpose::STANDARD
+                            .decode(payload)
+                            .map_err(std::io::Error::other)?,
+                        expected.as_bytes()
+                    );
+                    if success {
+                        socket.write_all(b"235 2.7.0 accepted\r\n")?;
+                    } else {
+                        socket.write_all(b"334 eyJzdGF0dXMiOiI0MDEifQ==\r\n")?;
+                        command.clear();
+                        reader.read_line(&mut command)?;
+                        assert_eq!(command, acknowledgement);
+                        socket.write_all(b"535 5.7.1 authentication failed\r\n")?;
+                    }
+                    Ok(())
                 });
-            assert_eq!(result.is_ok(), success);
-            server.join().map_err(|_| "fake SMTP server panicked")??;
+                let smtp = SmtpSubmission {
+                    account: Account::preset(provider, "me@example.org")?,
+                    secret: LoginSecret {
+                        bearer: true,
+                        value: "synthetic".into(),
+                    },
+                };
+                smtp.builder(None)?;
+                let result = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()?
+                    .block_on(async {
+                        let mut client =
+                            mail_send::SmtpClient::connect(address, Duration::from_secs(5)).await?;
+                        smtp.authenticate_bearer(&mut client).await
+                    });
+                assert_eq!(result.is_ok(), success);
+                server.join().map_err(|_| "fake SMTP server panicked")??;
+            }
         }
         Ok(())
     }

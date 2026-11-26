@@ -20,6 +20,11 @@ just build                 # target/release/moonmail, with embedded app resource
 just check                 # headless UI check using a temporary synthetic archive
 ```
 
+When browser sign-in returns to Moonmail and setup stops, run `just debug` and retry Add Account.
+The Fastmail trace in `target/moonmail-debug.log` shows the callback, token exchange,
+IMAP and SMTP checks, and authentication rejection codes. These events omit account
+addresses, tokens, and raw server replies.
+
 The MailMate-style layout has a full-height mailbox sidebar, a dense message table
 across the top, **Correspondence below-left**, and the message reader below-right.
 Drag the dividers to resize the panes. Tables use compact, striped rows; the reader

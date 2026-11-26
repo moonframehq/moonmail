@@ -1,4 +1,4 @@
-//! Sends one synthetic message between dedicated Fastmail test accounts.
+//! Opt-in Fastmail interoperability checks for IMAP/SMTP authentication and JMAP delivery.
 use {
     moonmail_core::{BlobStore, MailboxRole, MimeParser},
     moonmail_mime::StalwartParser,
@@ -95,5 +95,26 @@ fn fastmail_round_trip() -> Result {
             std::thread::sleep(Duration::from_secs(3));
         }
     }
+    Ok(())
+}
+
+/// Exercise the production TLS and SASL adapters without an account or a message.
+#[test]
+#[ignore = "contacts Fastmail with an intentionally invalid synthetic credential"]
+fn fastmail_parses_imap_and_smtp_bearer_commands() -> Result {
+    use moonmail_network::{Error, LoginSecret, RustImap, SmtpSubmission, SubmitError};
+    let account = Account::fastmail("moonmail-fixture@example.invalid")?;
+    let secret = LoginSecret {
+        bearer: true,
+        value: "synthetic-invalid-token".into(),
+    };
+    assert!(matches!(
+        RustImap::connect(&account, &secret),
+        Err(Error::LoginRejected)
+    ));
+    let result = SmtpSubmission { account, secret }.check_connection();
+    assert!(
+        matches!(result, Err(SubmitError::Connect(mail_send::Error::AuthenticationFailed(reply))) if reply.code() == 535)
+    );
     Ok(())
 }
