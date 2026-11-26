@@ -60,7 +60,11 @@ pub fn dispatch(root: &Path, args: &[String]) -> Result<bool> {
                 value: rpassword::prompt_password("Mail server password: ")?.into(),
             };
             moonmail_network::check_account(&account, &secret)?;
-            Auth::new(Keychain).password(&account.email, secret.value.clone())?;
+            if account.transport == moonmail_network::Transport::Jmap {
+                Auth::new(Keychain).api_token(&account.email, secret.value)?;
+            } else {
+                Auth::new(Keychain).password(&account.email, secret.value)?;
+            }
             account.save(root)?;
             println!(
                 "Connected {}. Run `just sync` to download mail.",

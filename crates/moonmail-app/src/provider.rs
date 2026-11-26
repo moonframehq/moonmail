@@ -110,6 +110,7 @@ pub struct Mail {
     identity_new_id: String,
     identity_account: Option<String>,
     job: Option<Receiver<Event>>,
+    check_jmap_edits: bool,
     sync_cancel: Option<Arc<AtomicBool>>,
     sync_schedule: crate::sync_schedule::SyncSchedule,
     status: String,
@@ -171,6 +172,7 @@ impl Mail {
             identity_new_id: uuid::Uuid::new_v4().to_string(),
             identity_account: None,
             job: None,
+            check_jmap_edits: false,
             sync_cancel: None,
             sync_schedule: crate::sync_schedule::SyncSchedule::default(),
             status: "Local mail, at your pace".into(),
@@ -265,6 +267,7 @@ impl Mail {
         self.reader_revision = self.reader_revision.wrapping_add(1);
         if self.preferences.mark_read && !self.archive()?.has_pending_move(id)? {
             self.archive_mut()?.set_flag(id, "seen", true)?;
+            self.check_jmap_edits = true;
         }
         let detail = self.archive()?.detail(id)?;
         let links = crate::reader_resources::links(&detail.text, detail.html.as_deref())?;
@@ -1004,6 +1007,27 @@ impl Mail {
             },
             _ => {},
         }
+        if matches!(
+            action.as_str(),
+            "folder_create"
+                | "folder_delete"
+                | "folder_rename"
+                | "thread_read"
+                | "thread_unread"
+                | "selection_flag"
+                | "star"
+                | "unread"
+                | "keyword_set"
+                | "keyword_retry"
+                | "choose_copy"
+                | "copy_messages"
+                | "archive_messages"
+                | "trash_messages"
+                | "choose_move"
+                | "move_messages"
+        ) {
+            self.check_jmap_edits = true;
+        }
         Ok(())
     }
 }
@@ -1123,6 +1147,15 @@ impl Native for Mail {
         if done {
             self.job = None;
             self.sync_cancel = None;
+        }
+        if self.job.is_none() && std::mem::take(&mut self.check_jmap_edits) && !self.demo {
+            match self.start_jmap_edits() {
+                Ok(started) => changed |= started,
+                Err(error) => {
+                    self.error = format!("{error:#}");
+                    changed = true;
+                },
+            }
         }
         match self.maybe_auto_sync(std::time::Instant::now()) {
             Ok(started) => changed |= started,

@@ -46,7 +46,7 @@ impl Archive {
             transaction.pragma_query_value(None, "user_version", |row| row.get(0))?;
         match version {
             0 => transaction.execute_batch(include_str!("schema.sql"))?,
-            1..=20 => {},
+            1..=21 => {},
             version => return Err(Error::Schema(version)),
         }
         if version < 2 {
@@ -123,6 +123,9 @@ impl Archive {
         }
         if version < 20 {
             transaction.execute_batch(include_str!("sent_copy.sql"))?;
+        }
+        if version < 21 {
+            transaction.execute_batch(include_str!("jmap.sql"))?;
         }
         transaction.commit()?;
         connection.execute_batch(

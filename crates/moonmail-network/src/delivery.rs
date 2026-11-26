@@ -39,7 +39,7 @@ pub fn transmit_queued<S: Submission, B: BlobStore>(
         return Err(DeliveryError::Ineligible);
     }
     match submission.submit(&item.sender, &item.recipients, &raw) {
-        Ok(()) => archive.send_result(id, "sent", "Accepted by SMTP server")?,
+        Ok(()) => archive.send_result(id, "sent", "Accepted by mail server")?,
         Err(error) => {
             let state = match S::failure(&error) {
                 SubmissionFailure::NotSubmitted => "failed",
@@ -64,6 +64,18 @@ pub fn send_queued(root: &Path, id: i64) -> Result<()> {
     }
     // Validate the item before touching credentials or refreshing a token.
     let secret = Auth::new(Keychain).credentials_for(&account)?;
+    if account.transport == crate::Transport::Jmap {
+        let mut client = crate::jmap::Client::fastmail(secret.value)?;
+        archive.prepare_sent_copy(id, false)?;
+        transmit_queued(
+            &archive,
+            &account.email,
+            id,
+            &FileBlobs::new(root),
+            &mut client,
+        )?;
+        return Ok(());
+    }
     archive.prepare_sent_copy(id, account.sent_copy == crate::SentCopy::Append)?;
     let email = account.email.clone();
     transmit_queued(

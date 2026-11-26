@@ -1,6 +1,12 @@
 local function build(props)
 	local config, email = props.config or {}, props.email or ""
 	local rows = {}
+	if props.provider == "fastmail" then
+		for _, transport in { "imap", "jmap" } do
+			table.insert(rows, ui.button { label = string.upper(transport), small = true, variant = if config.transport == transport then "primary" else "ghost", msg = { account_field = "transport", value = transport }, to = "settings" })
+		end
+		if config.transport == "jmap" then return ui.row { gap = "small", table.unpack(rows) } end
+	end
 	for _, kind in { "imap", "smtp" } do
 		local host, port, username, tls = kind .. "_host", kind .. "_port", kind .. "_username", kind .. "_tls"
 		table.insert(rows, ui.column { gap = "small", shrink = false,

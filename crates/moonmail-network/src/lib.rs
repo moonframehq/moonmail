@@ -16,6 +16,10 @@ mod imap_inventory;
 mod imap_keywords;
 mod imap_tls;
 mod incoming;
+pub mod jmap;
+mod jmap_submission;
+mod jmap_sync;
+mod jmap_writes;
 mod keywords;
 mod moves;
 mod recipients;
@@ -24,7 +28,7 @@ mod submission;
 mod sync;
 
 pub use {
-    account::{Account, Provider, SentCopy, TlsMode, validate_address},
+    account::{Account, Provider, SentCopy, TlsMode, Transport, validate_address},
     account_connection::check_account,
     auth::{Auth, AuthError, LoginSecret, oauth_bearer},
     composition::{ReplyMode, compose_reply, compose_reply_with_identities},
@@ -44,6 +48,7 @@ pub use {
         prepare_message, prepare_message_with_attachments,
     },
     sync::{
-        SyncError, sync_account, sync_account_cancellable, synchronize, synchronize_cancellable,
+        SyncError, sync_account, sync_account_cancellable, sync_jmap_edits, synchronize,
+        synchronize_cancellable,
     },
 };

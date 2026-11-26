@@ -17,6 +17,7 @@ local function choose_provider(state, provider, account)
 	state.server_config = {
 		imap_host = account.imap_host or "", imap_port = tostring(account.imap_port or 993), imap_tls = account.imap_tls or "implicit", imap_username = account.imap_username or "",
 		smtp_host = account.smtp_host or "", smtp_port = tostring(account.smtp_port or 587), smtp_tls = account.smtp_tls or "starttls", smtp_username = account.smtp_username or "",
+		transport = account.transport or "imap",
 		sent_copy = account.sent_copy or "server",
 	}
 	state.server_settings = provider == "other"

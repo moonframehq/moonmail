@@ -47,3 +47,5 @@ pub use {
     saved_searches::SavedSearch,
     sync_inventory::SyncMessage,
 };
+mod jmap;
+pub use jmap::JmapFolder;

@@ -90,6 +90,7 @@ just ci
 
 - **Accounts**: up to 32, over IMAP and SMTP. Fastmail, Gmail, Microsoft,
   iCloud, Yahoo, AOL and custom servers, with credentials in macOS Keychain.
+  Fastmail also supports native JMAP sync and submission. [Setup and interop tests](docs/fastmail-testing.md).
 - **Sync**: folders, flags and keywords, by hand or on a timer, with original
   messages kept byte for byte.
 - **Reading**: threads, Correspondence, and sanitized HTML with remote images
