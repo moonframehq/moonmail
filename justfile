@@ -99,3 +99,7 @@ test-mail-image:
 
 test-mail-docker: test-mail-image
     python3 scripts/test_maild_docker.py
+
+# Disposable Stalwart with two synthetic OAuth accounts on loopback.
+test-stalwart:
+    python3 scripts/test_stalwart.py

@@ -42,3 +42,5 @@ jobs:
         run: docker build -f docker/test-maild.Dockerfile -t moonmail-test-maild:ci .
       - name: Test both TLS modes against the image
         run: python3 scripts/test_maild_docker.py moonmail-test-maild:ci
+      - name: Verify two-account JMAP delivery, push, and edits with Stalwart
+        run: python3 scripts/test_stalwart.py
