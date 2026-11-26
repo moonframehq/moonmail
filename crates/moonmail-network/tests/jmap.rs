@@ -396,7 +396,7 @@ fn upgrade_keeps_existing_archive_and_transport() -> Result {
     let mailbox = archive.mailbox(ACCOUNT, "Old mailbox")?;
     drop(archive);
     let db = rusqlite::Connection::open(dir.path().join("archive.sqlite3"))?;
-    db.execute_batch("DROP TABLE jmap_accounts; DROP TABLE jmap_emails; DROP TABLE jmap_folders; PRAGMA user_version=20;")?;
+    db.execute_batch("DROP TABLE jmap_accounts; DROP TABLE jmap_emails; DROP TABLE jmap_folders; PRAGMA user_version=23;")?;
     let archive = Archive::open(dir.path())?;
     assert_eq!(archive.mailbox(ACCOUNT, "Old mailbox")?, mailbox);
     archive.bind_jmap(ACCOUNT, "a")?;
