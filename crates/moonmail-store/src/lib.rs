@@ -51,5 +51,5 @@ pub use {
     remote_drafts::RemoteDraftSource,
     rules::{KeywordRule, KeywordRuleRun},
     saved_searches::SavedSearch,
-    sync_inventory::{GmailMetadata, SyncMessage},
+    sync_inventory::{GmailMetadata, InventoryKind, SyncCheckpoint, SyncFlags, SyncMessage},
 };

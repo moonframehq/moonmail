@@ -46,7 +46,7 @@ impl Archive {
             transaction.pragma_query_value(None, "user_version", |row| row.get(0))?;
         match version {
             0 => transaction.execute_batch(include_str!("schema.sql"))?,
-            1..=22 => {},
+            1..=23 => {},
             version => return Err(Error::Schema(version)),
         }
         if version < 2 {
@@ -130,6 +130,9 @@ impl Archive {
         if version < 22 {
             transaction.execute_batch(include_str!("remote_drafts.sql"))?;
         }
+        if version < 23 {
+            transaction.execute_batch(include_str!("imap_checkpoint.sql"))?;
+        }
         transaction.commit()?;
         connection.execute_batch(
             "PRAGMA temp_store=FILE;
@@ -187,10 +190,12 @@ impl Archive {
         incoming: IncomingMessage<'_>,
         keywords: &[String],
     ) -> std::result::Result<MessageId, IngestError<P::Error, B::Error>> {
-        self.ingest_with_metadata(parser, blobs, incoming, keywords, None)
+        self.ingest_observed(parser, blobs, incoming, keywords, None, false)
     }
 
-    pub fn ingest_with_metadata<P: MimeParser, B: BlobStore>(
+    /// Check that the inventory which supplied these flags and UID is still
+    /// current inside the same transaction that publishes the occurrence.
+    pub fn ingest_staged<P: MimeParser, B: BlobStore>(
         &mut self,
         parser: &P,
         blobs: &B,
@@ -198,13 +203,25 @@ impl Archive {
         keywords: &[String],
         gmail: Option<&crate::GmailMetadata>,
     ) -> std::result::Result<MessageId, IngestError<P::Error, B::Error>> {
+        self.ingest_observed(parser, blobs, incoming, keywords, gmail, true)
+    }
+
+    fn ingest_observed<P: MimeParser, B: BlobStore>(
+        &mut self,
+        parser: &P,
+        blobs: &B,
+        incoming: IncomingMessage<'_>,
+        keywords: &[String],
+        gmail: Option<&crate::GmailMetadata>,
+        staged: bool,
+    ) -> std::result::Result<MessageId, IngestError<P::Error, B::Error>> {
         let keywords = crate::keywords::normalize(keywords)?;
         if incoming.raw.len() > 64 * 1024 * 1024 {
             return Err(Error::Invalid("message exceeds 64 MiB limit").into());
         }
         let parsed = parser.parse(incoming.raw).map_err(IngestError::Parser)?;
         let hash = blobs.put(incoming.raw).map_err(IngestError::Blob)?;
-        self.insert_parsed(incoming, parsed, &hash, &keywords, gmail)
+        self.insert_parsed(incoming, parsed, &hash, &keywords, gmail, staged)
             .map_err(IngestError::Store)
     }
 
@@ -215,6 +232,7 @@ impl Archive {
         hash: &str,
         keywords: &[String],
         gmail: Option<&crate::GmailMetadata>,
+        staged: bool,
     ) -> Result<MessageId> {
         let text = parsed.text_body.clone().unwrap_or_else(|| {
             parsed
@@ -254,6 +272,18 @@ impl Archive {
             .map(String::as_str)
             .unwrap_or(incoming.origin);
         let transaction = self.connection.transaction()?;
+        if staged {
+            let current: bool = transaction.query_row(
+                "SELECT EXISTS(SELECT 1 FROM sync_scope c JOIN mailboxes m ON m.id=c.mailbox
+                JOIN sync_inventory s ON s.uid=?3 WHERE c.mailbox=?1 AND c.epoch=?2 AND c.complete=1
+                AND s.size IS NOT NULL AND c.generation=m.inventory_generation)",
+                params![incoming.mailbox, incoming.epoch, incoming.uid],
+                |row| row.get(0),
+            )?;
+            if !current {
+                return Err(Error::Invalid("Download inventory was superseded"));
+            }
+        }
         let existing: Option<i64> = transaction
             .query_row(
                 "SELECT id FROM messages WHERE account=?1 AND origin=?2",
@@ -368,7 +398,7 @@ impl Archive {
             params![mailbox, epoch],
         )?;
         transaction.execute(
-            "UPDATE mailboxes SET epoch=?2 WHERE id=?1",
+            "UPDATE mailboxes SET epoch=?2,highest_modseq=NULL,inventory_generation=inventory_generation+1 WHERE id=?1",
             params![mailbox, epoch],
         )?;
         transaction.execute_batch("CREATE TEMP TABLE IF NOT EXISTS live_uids(uid INTEGER PRIMARY KEY); DELETE FROM live_uids;")?;

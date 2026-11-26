@@ -5,9 +5,9 @@ use {
     std::io::{Read, Write},
 };
 
-fn mailbox(name: &str) -> Result<String> {
+pub(crate) fn mailbox(name: &str) -> Result<String> {
     if name.is_empty() || name.chars().any(char::is_control) {
-        return Err(Error::Invalid("Invalid copy destination"));
+        return Err(Error::Invalid("Invalid IMAP mailbox name"));
     }
     Ok(format!(
         "\"{}\"",

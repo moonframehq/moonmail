@@ -17,6 +17,25 @@ pub struct RemoteFolder {
     pub role: Option<MailboxRole>,
 }
 pub use moonmail_store::SyncMessage as RemoteMessage;
+use {
+    moonmail_store::{InventoryKind, SyncCheckpoint, SyncFlags},
+    std::collections::HashMap,
+};
+
+pub enum InventoryBatch<'a> {
+    Metadata(&'a [RemoteMessage]),
+    Flags(&'a [SyncFlags]),
+    Live(&'a [u32]),
+    Vanished(u32, u32),
+}
+
+pub enum ScanOutcome {
+    Unchanged(SyncCheckpoint),
+    Complete {
+        kind: InventoryKind,
+        modseq: Option<u64>,
+    },
+}
 pub struct RemoteSnapshot {
     pub epoch: u32,
     pub messages: Vec<RemoteMessage>,
@@ -151,6 +170,33 @@ pub trait IncomingMail {
         }
         Ok(())
     }
+    /// Emit one selected epoch and upper UID throughout a scan. Metadata and
+    /// flag batches contain at most 1000 UIDs. Only the completed outcome
+    /// authorizes publishing changes or using a new modification sequence.
+    fn scan_changes<S>(
+        &mut self,
+        folder: &str,
+        _previous: Option<SyncCheckpoint>,
+        mut sink: impl FnMut(u32, u32, InventoryBatch<'_>) -> std::result::Result<(), S>,
+    ) -> std::result::Result<ScanOutcome, ScanError<Self::Error, S>> {
+        self.scan(folder, |epoch, upper, rows| {
+            sink(epoch, upper, InventoryBatch::Metadata(rows))
+        })?;
+        Ok(ScanOutcome::Complete {
+            kind: InventoryKind::Full,
+            modseq: None,
+        })
+    }
+
+    /// A missing entry is retried individually. Adapters without batch support
+    /// leave all UIDs for the cancellable single-message path. A tagged batch
+    /// rejection can return an empty map. Transport errors end the sync.
+    fn fetch_batch(
+        &mut self,
+        _uids: &[u32],
+    ) -> std::result::Result<HashMap<u32, Vec<u8>>, Self::Error> {
+        Ok(HashMap::new())
+    }
     fn fetch(&mut self, uid: u32) -> std::result::Result<Option<Vec<u8>>, Self::Error>;
     fn flag(&mut self, uid: u32, kind: &str, value: bool) -> std::result::Result<(), Self::Error>;
     /// Select and validate UIDVALIDITY/UID and permanent keyword support before
@@ -250,6 +296,8 @@ pub struct RustImap {
     gmail_folders: bool,
     special_use: bool,
     gmail: bool,
+    condstore: bool,
+    qresync: bool,
 }
 
 struct Bearer {
@@ -352,16 +400,36 @@ impl RustImap {
                 .login(account.imap_login(), secret.value.expose_secret())
                 .map_err(|(error, _)| error)?
         };
-        let capabilities = session.capabilities()?;
-        let has_extension = |extension: &str| {
-            capabilities.iter().any(|cap| matches!(cap, imap_proto::Capability::Atom(name) if name.eq_ignore_ascii_case(extension)))
+        let caps = session.capabilities()?;
+        let gmail = caps.has_str("X-GM-EXT-1");
+        let condstore = caps.has_str("CONDSTORE") || caps.has_str("QRESYNC");
+        let special_use = caps.has_str("SPECIAL-USE");
+        // ENABLE is valid only before the first mailbox selection.
+        let qresync = if caps.has_str("QRESYNC") {
+            match session.run_command_and_read_response("ENABLE QRESYNC") {
+                Ok(response) => response.split(|b| *b == b'\n').any(|line| {
+                    let mut words = line
+                        .split(|b| b.is_ascii_whitespace())
+                        .filter(|word| !word.is_empty());
+                    words.next() == Some(b"*".as_slice())
+                        && words
+                            .next()
+                            .is_some_and(|w| w.eq_ignore_ascii_case(b"ENABLED"))
+                        && words.any(|w| w.eq_ignore_ascii_case(b"QRESYNC"))
+                }),
+                Err(imap::Error::No(_) | imap::Error::Bad(_)) => false,
+                Err(e) => return Err(e.into()),
+            }
+        } else {
+            false
         };
-        let gmail = has_extension("X-GM-EXT-1");
         Ok(Self {
             gmail,
             session,
             gmail_folders: gmail || account.provider == Provider::Google,
-            special_use: has_extension("SPECIAL-USE"),
+            special_use,
+            condstore,
+            qresync,
         })
     }
 }
@@ -497,6 +565,36 @@ impl IncomingMail for RustImap {
         sink: impl FnMut(u32, u32, &[RemoteMessage]) -> std::result::Result<(), S>,
     ) -> std::result::Result<(), ScanError<Self::Error, S>> {
         crate::imap_inventory::scan(&mut self.session, folder, self.gmail, sink)
+    }
+    fn scan_changes<S>(
+        &mut self,
+        folder: &str,
+        previous: Option<SyncCheckpoint>,
+        sink: impl FnMut(u32, u32, InventoryBatch<'_>) -> std::result::Result<(), S>,
+    ) -> std::result::Result<ScanOutcome, ScanError<Error, S>> {
+        crate::imap_inventory::changes(
+            &mut self.session,
+            folder,
+            self.condstore,
+            self.qresync,
+            self.gmail,
+            previous,
+            sink,
+        )
+    }
+    fn fetch_batch(&mut self, uids: &[u32]) -> Result<HashMap<u32, Vec<u8>>> {
+        let fetched = match self
+            .session
+            .uid_fetch(crate::imap_inventory::uid_set(uids), "(UID BODY.PEEK[])")
+        {
+            Ok(fetched) => fetched,
+            Err(imap::Error::No(_) | imap::Error::Bad(_)) => return Ok(HashMap::new()),
+            Err(e) => return Err(e.into()),
+        };
+        Ok(fetched
+            .iter()
+            .filter_map(|f| Some((f.uid?, f.body()?.to_vec())))
+            .collect())
     }
     fn fetch(&mut self, uid: u32) -> Result<Option<Vec<u8>>> {
         Ok(self

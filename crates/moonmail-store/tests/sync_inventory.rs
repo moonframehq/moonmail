@@ -109,3 +109,95 @@ fn staged_inventory_pages_thousands_of_missing_uids_and_rejects_duplicate_batche
     assert!(archive.missing_sync_messages(u64::MAX)?.is_empty());
     Ok(())
 }
+
+#[test]
+fn checkpoint_requires_durable_downloads_and_a_current_generation() -> Result {
+    let dir = tempfile::tempdir()?;
+    let mut archive = Archive::open(dir.path())?;
+    let mailbox = archive.mailbox("fixture", "INBOX")?;
+    archive.begin_sync_inventory()?;
+    archive.stage_sync_inventory(7, 1, &[item(1)])?;
+    archive.finish_sync_inventory(mailbox)?;
+    archive.publish_sync_checkpoint(mailbox, u64::MAX)?;
+    assert_eq!(archive.sync_checkpoint(mailbox)?, None);
+    archive.ingest(
+        &StalwartParser::default(),
+        &FileBlobs::new(dir.path()),
+        IncomingMessage {
+            mailbox,
+            epoch: 7,
+            uid: Some(1),
+            account: "fixture",
+            origin: "fixture:1",
+            received_at: 1,
+            seen: false,
+            starred: false,
+            raw: b"Subject: Test\r\n\r\nBody",
+        },
+    )?;
+    archive.publish_sync_checkpoint(mailbox, u64::MAX)?;
+    let mut second = Archive::open(dir.path())?;
+    assert_eq!(
+        second
+            .sync_checkpoint(mailbox)?
+            .ok_or("missing checkpoint")?
+            .highest_modseq,
+        u64::MAX
+    );
+    second.begin_sync_inventory()?;
+    second.stage_sync_inventory(8, 0, &[])?;
+    second.finish_sync_inventory(mailbox)?;
+    archive.publish_sync_checkpoint(mailbox, u64::MAX)?;
+    assert_eq!(archive.sync_checkpoint(mailbox)?, None);
+    Ok(())
+}
+
+#[test]
+fn vanished_ranges_commit_only_after_complete_delta_and_preserve_survivors() -> Result {
+    use moonmail_store::InventoryKind;
+    let dir = tempfile::tempdir()?;
+    let mut archive = Archive::open(dir.path())?;
+    let mailbox = archive.mailbox("fixture", "INBOX")?;
+    archive.begin_sync_inventory()?;
+    archive.stage_sync_inventory(7, 5, &[item(1), item(3), item(5)])?;
+    archive.finish_sync_inventory(mailbox)?;
+    for uid in [1, 3, 5] {
+        archive.ingest_staged(
+            &StalwartParser::default(),
+            &FileBlobs::new(dir.path()),
+            IncomingMessage {
+                mailbox,
+                epoch: 7,
+                uid: Some(uid),
+                account: "fixture",
+                origin: &uid.to_string(),
+                seen: false,
+                starred: false,
+                received_at: 1,
+                raw: b"Subject: Test\r\n\r\nBody",
+            },
+            &[],
+            None,
+        )?;
+    }
+    archive.publish_sync_checkpoint(mailbox, 6)?;
+    let base = archive
+        .begin_mailbox_inventory(mailbox)?
+        .ok_or("missing checkpoint")?;
+    archive.stage_sync_inventory(7, 5, &[])?;
+    assert!(archive.stage_sync_vanished(8, 5, 1, 4).is_err());
+    archive.stage_sync_vanished(7, 5, 1, 4)?;
+    assert_eq!(archive.page(&Default::default(), 10)?.rows.len(), 3);
+    archive.merge_sync_inventory(mailbox, InventoryKind::Vanished(base))?;
+    archive.publish_sync_checkpoint(mailbox, 7)?;
+    assert_eq!(archive.page(&Default::default(), 10)?.rows.len(), 1);
+    assert_eq!(archive.total()?, 3);
+    assert_eq!(
+        archive
+            .sync_checkpoint(mailbox)?
+            .ok_or("missing delta checkpoint")?
+            .highest_modseq,
+        7
+    );
+    Ok(())
+}

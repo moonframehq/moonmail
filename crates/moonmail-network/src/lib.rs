@@ -36,8 +36,9 @@ pub use {
     forwarding::compose_forward,
     identities::{choose_identity, insert_signature, validate_identity},
     incoming::{
-        CopyOutcome, DraftAppend, ExpungeOutcome, FolderOutcome, IncomingMail, KeywordOutcome,
-        MoveOutcome, RemoteFolder, RemoteMessage, RemoteSnapshot, RemoteUid, RustImap, ScanError,
+        CopyOutcome, DraftAppend, ExpungeOutcome, FolderOutcome, IncomingMail, InventoryBatch,
+        KeywordOutcome, MoveOutcome, RemoteFolder, RemoteMessage, RemoteSnapshot, RemoteUid,
+        RustImap, ScanError, ScanOutcome,
     },
     secrecy::{ExposeSecret, SecretString},
     sent_copy::{SentCopyError, save_sent_copy},

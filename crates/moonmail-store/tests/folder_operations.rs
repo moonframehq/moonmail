@@ -233,10 +233,7 @@ fn version_fourteen_upgrade_keeps_folder_identity_and_existing_metadata() -> Res
     drop(archive);
     let db = Connection::open(dir.path().join("archive.sqlite3"))?;
     db.execute_batch(concat!(
-        concat!(
-            concat!(include_str!("fixtures/remove_remote_drafts.sql"),include_str!("fixtures/remove_gmail.sql")),
-            include_str!("fixtures/remove_sent_copy.sql")
-        ),
+        include_str!("fixtures/remove_after_v19.sql"),
         "DROP TABLE search_partitions; DROP TABLE keyword_rule_runs; DROP TABLE keyword_rules;"
     ))?;
     db.execute_batch("DROP TABLE occurrence_keywords; DROP TABLE keyword_labels; DROP TABLE keyword_operations; ALTER TABLE move_operations DROP COLUMN kind; DROP TABLE folder_operations; PRAGMA user_version=14;")?;

@@ -97,3 +97,81 @@ fn streamed_inventory_drives_bounded_missing_pages_and_failed_epoch_scan_cannot_
     assert_eq!(archive.total()?, 305);
     Ok(())
 }
+
+#[test]
+fn body_batches_respect_count_and_bytes_and_retry_only_omitted_uids() -> Result {
+    struct Batched {
+        batches: Vec<Vec<u32>>,
+        singles: Vec<u32>,
+    }
+    impl IncomingMail for Batched {
+        type Error = io::Error;
+        fn folders(&mut self) -> io::Result<Vec<RemoteFolder>> {
+            Ok(vec![RemoteFolder {
+                name: "INBOX".into(),
+                delimiter: None,
+                selectable: true,
+                role: None,
+            }])
+        }
+        fn snapshot(&mut self, _: &str) -> io::Result<RemoteSnapshot> {
+            Ok(RemoteSnapshot {
+                epoch: 1,
+                messages: (1..=38)
+                    .map(|uid| RemoteMessage {
+                        gmail: None,
+                        uid,
+                        seen: false,
+                        starred: false,
+                        received_at: 0,
+                        keywords: Vec::new(),
+                        size: match uid {
+                            38 => 64 * 1024 * 1024,
+                            37 | 36 => 5 * 1024 * 1024,
+                            _ => 50,
+                        },
+                    })
+                    .collect(),
+            })
+        }
+        fn fetch_batch(
+            &mut self,
+            uids: &[u32],
+        ) -> io::Result<std::collections::HashMap<u32, Vec<u8>>> {
+            self.batches.push(uids.to_vec());
+            Ok(uids
+                .iter()
+                .rev()
+                .skip(1)
+                .map(|uid| (*uid, format!("Subject: {uid}\r\n\r\nbody").into_bytes()))
+                .collect())
+        }
+        fn fetch(&mut self, uid: u32) -> io::Result<Option<Vec<u8>>> {
+            self.singles.push(uid);
+            Ok(Some(format!("Subject: {uid}\r\n\r\nbody").into_bytes()))
+        }
+        fn flag(&mut self, _: u32, _: &str, _: bool) -> io::Result<()> {
+            Ok(())
+        }
+    }
+    let dir = tempfile::tempdir()?;
+    let mut archive = Archive::open(dir.path())?;
+    let mut server = Batched {
+        batches: vec![],
+        singles: vec![],
+    };
+    synchronize(
+        &mut server,
+        &Account::fastmail("me@example.org")?,
+        &mut archive,
+        &FileBlobs::new(dir.path()),
+        |_| {},
+    )?;
+    assert_eq!(
+        server.batches,
+        [(5..=36).rev().collect::<Vec<_>>(), (1..=4).rev().collect()]
+    );
+    assert_eq!(server.singles, [38, 37, 5, 1]);
+    assert_eq!(archive.total()?, 38);
+    Ok(())
+}

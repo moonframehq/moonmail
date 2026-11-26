@@ -634,3 +634,57 @@ fn scan_recovers_append_without_acknowledgement_by_message_id() -> Result {
     assert!(incoming.snapshot("Drafts")?.messages.is_empty());
     Ok(())
 }
+
+#[test]
+fn condstore_delta_recovers_after_cancellation_and_reconciles_expunge() -> Result {
+    let fixture = Fixture::new(false, false)?;
+    let peer = fixture.peer(0, TlsMode::Implicit)?;
+    let mut remote = fixture.incoming(&peer)?;
+    for uid in 1..=3 {
+        remote.append_sent("INBOX", format!("Subject: {uid}\r\n\r\nFixture").as_bytes())?;
+    }
+    let mut archive = Archive::open(peer.root.path())?;
+    let mailbox = archive.mailbox(&peer.account.email, "INBOX")?;
+    let stop = std::cell::Cell::new(false);
+    let result = synchronize_cancellable(
+        &mut remote,
+        &peer.account,
+        &mut archive,
+        &FileBlobs::new(peer.root.path()),
+        |s| {
+            if s.starts_with("Downloaded") {
+                stop.set(true)
+            }
+        },
+        || stop.get(),
+    );
+    assert!(matches!(
+        result,
+        Err(moonmail_network::SyncError::Cancelled)
+    ));
+    assert_eq!(archive.total()?, 1);
+    assert_eq!(archive.sync_checkpoint(mailbox)?, None);
+    fixture.sync(&peer)?;
+    let before = archive
+        .sync_checkpoint(mailbox)?
+        .ok_or("no initial checkpoint")?;
+    fixture.sync(&peer)?;
+    assert_eq!(archive.sync_checkpoint(mailbox)?, Some(before));
+    remote.select_uid("INBOX", 2)?;
+    remote.flag(2, "flagged", true)?;
+    remote.remove_copied_source(1)?;
+    remote.append_sent("INBOX", b"Subject: 4\r\n\r\nFixture")?;
+    fixture.sync(&peer)?;
+    let after = archive
+        .sync_checkpoint(mailbox)?
+        .ok_or("no delta checkpoint")?;
+    assert_eq!(after.upper, 4);
+    assert!(after.highest_modseq > before.highest_modseq);
+    let rows = archive.page(&Default::default(), 10)?.rows;
+    assert_eq!(rows.len(), 3);
+    assert!(rows.iter().any(|r| r.subject == "2" && r.starred));
+    assert!(rows.iter().any(|r| r.subject == "4"));
+    assert!(rows.iter().all(|r| r.subject != "1"));
+    assert_eq!(archive.total()?, 4);
+    Ok(())
+}

@@ -17,6 +17,14 @@ impl Archive {
             return Ok(page);
         }
         let tx = self.connection.transaction()?;
+        let current: bool = tx.query_row(
+            "SELECT EXISTS(SELECT 1 FROM sync_scope c JOIN mailboxes m ON m.id=c.mailbox
+             WHERE c.mailbox=?1 AND c.epoch=?2 AND c.complete AND c.generation=m.inventory_generation)",
+            params![mailbox, epoch], |row| row.get(0),
+        )?;
+        if !current {
+            return Err(Error::Invalid("Download inventory was superseded"));
+        }
         let mut missing = Vec::new();
         for message in page {
             if let Some(gmail) = &message.gmail

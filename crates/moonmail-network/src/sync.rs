@@ -1,5 +1,8 @@
 use {
-    crate::{Account, Auth, Error, IncomingMail, Keychain, Result, RustImap, ScanError},
+    crate::{
+        Account, Auth, Error, IncomingMail, InventoryBatch, Keychain, Result, RustImap, ScanError,
+        ScanOutcome,
+    },
     moonmail_mime::StalwartParser,
     moonmail_store::{Archive, FileBlobs, IncomingMessage},
     std::path::Path,
@@ -90,7 +93,7 @@ pub fn synchronize_cancellable<I: IncomingMail>(
         if !folder.selectable || !archive.sync_enabled(mailbox)? {
             continue;
         }
-        let epoch = inventory(incoming, archive, mailbox, &folder.name, &cancelled)?;
+        let (epoch, modseq) = inventory(incoming, archive, mailbox, &folder.name, &cancelled)?;
         let mut changed_flags = false;
         for operation in archive
             .pending_flags(&account.email)?
@@ -109,10 +112,10 @@ pub fn synchronize_cancellable<I: IncomingMail>(
             archive.acknowledge_flag(&operation)?;
         }
         check_cancel(&cancelled)?;
-        let epoch = if changed_flags {
+        let (epoch, modseq) = if changed_flags {
             inventory(incoming, archive, mailbox, &folder.name, &cancelled)?
         } else {
-            epoch
+            (epoch, modseq)
         };
         let mut before = u64::from(u32::MAX) + 1;
         loop {
@@ -120,16 +123,36 @@ pub fn synchronize_cancellable<I: IncomingMail>(
             let messages = archive.missing_sync_messages(before)?;
             let Some(last) = messages.last() else { break };
             before = u64::from(last.uid);
-            for message in archive.link_cached_messages(mailbox, epoch, messages)? {
+            let messages = archive.link_cached_messages(mailbox, epoch, messages)?;
+            let mut remaining = messages.as_slice();
+            while let Some(first) = remaining.first() {
                 check_cancel(&cancelled)?;
-                if message.size > 64 * 1024 * 1024 {
+                if first.size > BODY_LIMIT {
                     skipped += 1;
-                    progress(format!("Skipped UID {}: exceeds 64 MiB", message.uid));
+                    progress(format!("Skipped UID {}: exceeds 64 MiB", first.uid));
+                    remaining = &remaining[1..];
                     continue;
                 }
-                if let Some(raw) = incoming.fetch(message.uid).map_err(SyncError::Incoming)? {
+                let count = body_batch_len(remaining);
+                let (batch, rest) = remaining.split_at(count);
+                remaining = rest;
+                let uids: Vec<_> = batch.iter().map(|m| m.uid).collect();
+                let mut bodies = if count > 1 {
+                    incoming.fetch_batch(&uids).map_err(SyncError::Incoming)?
+                } else {
+                    Default::default()
+                };
+                for message in batch {
                     check_cancel(&cancelled)?;
-                    archive.ingest_with_metadata(
+                    let raw = match bodies.remove(&message.uid) {
+                        Some(raw) => raw,
+                        None => match incoming.fetch(message.uid).map_err(SyncError::Incoming)? {
+                            Some(raw) => raw,
+                            None => continue,
+                        },
+                    };
+                    check_cancel(&cancelled)?;
+                    archive.ingest_staged(
                         &parser,
                         blobs,
                         IncomingMessage {
@@ -169,6 +192,10 @@ pub fn synchronize_cancellable<I: IncomingMail>(
                 other => other?,
             }
         }
+        check_cancel(&cancelled)?;
+        if let Some(modseq) = modseq {
+            archive.publish_sync_checkpoint(mailbox, modseq)?;
+        }
     }
     crate::remote_drafts::deletions(incoming, &account.email, archive, &cancelled)?;
     check_cancel(&cancelled)?;
@@ -207,23 +234,42 @@ fn publish_folders(
     Ok(())
 }
 
+const BODY_LIMIT: u32 = 64 * 1024 * 1024;
+// The first eligible message may exceed the ordinary 8 MiB batch budget.
+fn body_batch_len(messages: &[SyncMessage]) -> usize {
+    let mut bytes = 0u64;
+    messages
+        .iter()
+        .take(32)
+        .take_while(|m| {
+            bytes += u64::from(m.size);
+            bytes <= 8 * 1024 * 1024
+        })
+        .count()
+        .max(1)
+}
+
 fn inventory<I: IncomingMail>(
     incoming: &mut I,
     archive: &mut Archive,
     mailbox: i64,
     folder: &str,
     cancelled: &impl Fn() -> bool,
-) -> std::result::Result<u32, SyncError<I::Error>> {
-    archive.begin_sync_inventory()?;
-    incoming
-        .scan(folder, |epoch, upper, batch| {
+) -> std::result::Result<(u32, Option<u64>), SyncError<I::Error>> {
+    let previous = archive.begin_mailbox_inventory(mailbox)?;
+    let outcome = incoming
+        .scan_changes(folder, previous, |epoch, upper, batch| {
             check_cancel(cancelled)?;
-            if batch.len() > 1000 {
-                return Err(SyncError::Store(moonmail_store::Error::Invalid(
-                    "Incoming adapter exceeded inventory batch limit",
-                )));
+            match batch {
+                InventoryBatch::Metadata(rows) => {
+                    archive.stage_sync_inventory(epoch, upper, rows)?
+                },
+                InventoryBatch::Live(uids) => archive.stage_sync_live(epoch, upper, uids)?,
+                InventoryBatch::Flags(flags) => archive.stage_sync_flags(epoch, upper, flags)?,
+                InventoryBatch::Vanished(lo, hi) => {
+                    archive.stage_sync_vanished(epoch, upper, lo, hi)?
+                },
             }
-            archive.stage_sync_inventory(epoch, upper, batch)?;
             check_cancel(cancelled)
         })
         .map_err(|error| match error {
@@ -231,7 +277,12 @@ fn inventory<I: IncomingMail>(
             ScanError::Sink(error) => error,
         })?;
     check_cancel(cancelled)?;
-    Ok(archive.finish_sync_inventory(mailbox)?)
+    match outcome {
+        ScanOutcome::Unchanged(base) => Ok((base.epoch, None)),
+        ScanOutcome::Complete { kind, modseq } => {
+            Ok((archive.merge_sync_inventory(mailbox, kind)?, modseq))
+        },
+    }
 }
 
 pub fn sync_account(root: &Path, progress: impl FnMut(String)) -> Result<()> {
