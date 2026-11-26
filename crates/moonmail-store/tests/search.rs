@@ -141,7 +141,7 @@ fn projection_upgrade_replays_cc_and_sender_names_and_failed_search_keeps_previo
     archive.acknowledge_index(sequence)?;
     drop(archive);
     let connection = rusqlite::Connection::open(directory.path().join("archive.sqlite3"))?;
-    connection.execute_batch(include_str!("fixtures/remove_sent_copy.sql"))?;
+    connection.execute_batch(include_str!("fixtures/remove_after_v19.sql"))?;
     connection.execute_batch(
         "DROP TABLE folder_operations; DROP TABLE thread_pending; DROP TABLE thread_edges; DROP TABLE thread_members; DROP TABLE thread_nodes;
          DROP TABLE search_sources; DROP TABLE saved_searches;

@@ -536,12 +536,17 @@ live views; original bytes remain in the archive.
 
 - Up to 32 accounts per archive; macOS Keychain persistence only. Google/Microsoft
   browser sign-in requires imported desktop client configuration. No POP3/EWS support.
-- Full UID/flag reconciliation, with native metadata FETCH requests covering at
-  most 1,000 UIDs each and disk-backed staging. Only a complete scan atomically
-  applies epoch changes, expunges and flags; missing downloads are paged in groups
-  of 100. Concurrent arrivals beyond the initial UIDNEXT wait until the next scan.
-   Sparse UID spaces require extra commands. No IDLE or CONDSTORE/QRESYNC yet;
-   this is not a demonstrated million-message sync engine.
+- Sync fixes the UID upper bound at SELECT. Full inventories use UID SEARCH and
+  fetch metadata for up to 700 existing UIDs per command. With CONDSTORE, matching
+  UIDVALIDITY, UIDNEXT and HIGHESTMODSEQ skip the inventory. Changed mailboxes use
+  CHANGEDSINCE for old flags and fetch metadata for arrivals. QRESYNC reports
+  expunged UIDs directly. Plain CONDSTORE checks UID membership with SEARCH.
+  SEARCH holds the UID list in memory, and the IMAP library buffers each command
+  response. No million-message or live-account performance measurement is available.
+- Sync stages metadata on disk and applies each completed inventory atomically.
+  Body downloads batch up to 32 UIDs and 8 MiB of reported sizes. Larger messages
+  up to 64 MiB download individually. A missing body or interrupted download keeps
+  the mailbox eligible for a full retry. Completed downloads survive cancellation.
 - **Settings → Synchronization** chooses manual (default), 1, 5, 15, or 30-minute
   checks while the app is open. Transport failures reconnect with 30-second
   exponential backoff capped at 15 minutes. Authentication, TLS, storage and

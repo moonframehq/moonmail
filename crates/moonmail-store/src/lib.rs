@@ -45,5 +45,5 @@ pub use {
     partitions::{PartitionBucket, PartitionField, PartitionPage},
     rules::{KeywordRule, KeywordRuleRun},
     saved_searches::SavedSearch,
-    sync_inventory::SyncMessage,
+    sync_inventory::{InventoryKind, SyncCheckpoint, SyncFlags, SyncMessage},
 };

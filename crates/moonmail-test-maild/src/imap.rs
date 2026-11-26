@@ -9,7 +9,7 @@ use {
         CommandCodec,
         decode::{CommandDecodeError, Decoder},
         imap_types::{
-            command::{Command, CommandBody},
+            command::{Command, CommandBody, FetchModifier},
             core::LiteralMode,
             fetch::{MacroOrMessageDataItemNames, MessageDataItemName},
             flag::{StoreResponse, StoreType},
@@ -36,7 +36,7 @@ pub(crate) fn serve(wire: &mut Wire, shared: &Shared) -> Result {
         match &command.body {
             CommandBody::Capability => {
                 wire.send(if wire.encrypted {
-                    "* CAPABILITY IMAP4rev1 UIDPLUS MOVE\r\n"
+                    "* CAPABILITY IMAP4rev1 UIDPLUS MOVE CONDSTORE\r\n"
                 } else {
                     "* CAPABILITY IMAP4rev1 STARTTLS LOGINDISABLED\r\n"
                 })?;
@@ -169,6 +169,11 @@ fn execute(command: &Command<'_>, session: &mut Session, shared: &Shared) -> Res
                 store.epoch,
                 selected.next
             )?;
+            write!(
+                out,
+                "* OK [HIGHESTMODSEQ {}] modseq\r\n",
+                selected.highest_modseq
+            )?;
             code = if session.readonly {
                 "[READ-ONLY] "
             } else {
@@ -197,12 +202,40 @@ fn execute(command: &Command<'_>, session: &mut Session, shared: &Shared) -> Res
             )?;
             code = format!("[APPENDUID {} {uid}] ", store.epoch);
         },
+        CommandBody::Search {
+            criteria,
+            uid: true,
+            ..
+        } => {
+            use imap_codec::imap_types::search::SearchKey;
+            let folder = store.folder(
+                account,
+                session
+                    .selected
+                    .as_deref()
+                    .ok_or(Error::Invalid("Select a mailbox"))?,
+            )?;
+            if !matches!(criteria.as_ref(), [SearchKey::All]) {
+                return Err(Error::Invalid("Unsupported SEARCH criteria"));
+            }
+            out.extend_from_slice(b"* SEARCH");
+            for message in &folder.messages {
+                write!(out, " {}", message.uid)?;
+            }
+            out.extend_from_slice(b"\r\n");
+        },
         CommandBody::Fetch {
             sequence_set,
+            modifiers,
             macro_or_item_names: MacroOrMessageDataItemNames::MessageDataItemNames(items),
             uid: true,
             ..
         } => {
+            let since = match modifiers.as_slice() {
+                [] => None,
+                [FetchModifier::ChangedSince(value)] => Some(value.get()),
+                _ => return Err(Error::Invalid("Unsupported FETCH modifiers")),
+            };
             if items.len() > 16
                 || items
                     .iter()
@@ -240,7 +273,13 @@ fn execute(command: &Command<'_>, session: &mut Session, shared: &Shared) -> Res
                 .enumerate()
                 .filter(|(_, m)| matches(sequence_set, m.uid, largest))
             {
+                if since.is_some_and(|m| message.modseq <= m) {
+                    continue;
+                }
                 write!(out, "* {} FETCH (UID {}", index + 1, message.uid)?;
+                if since.is_some() {
+                    write!(out, " MODSEQ ({})", message.modseq)?;
+                }
                 for item in items {
                     match item {
                         MessageDataItemName::Uid => {},
@@ -260,8 +299,9 @@ fn execute(command: &Command<'_>, session: &mut Session, shared: &Shared) -> Res
                             partial: None,
                             peek,
                         } => {
-                            if !peek && !session.readonly {
-                                message.flags.insert("\\Seen".into());
+                            if !peek && !session.readonly && message.flags.insert("\\Seen".into()) {
+                                folder.highest_modseq += 1;
+                                message.modseq = folder.highest_modseq;
                             }
                             write!(out, " BODY[] {{{}}}\r\n", message.raw.len())?;
                             out.extend_from_slice(&message.raw);
@@ -316,7 +356,11 @@ fn execute(command: &Command<'_>, session: &mut Session, shared: &Shared) -> Res
             }
             for (index, flags) in updates {
                 let message = &mut folder.messages[index];
-                message.flags = flags;
+                if message.flags != flags {
+                    folder.highest_modseq += 1;
+                    message.modseq = folder.highest_modseq;
+                    message.flags = flags;
+                }
                 if *response == StoreResponse::Answer {
                     write!(
                         out,

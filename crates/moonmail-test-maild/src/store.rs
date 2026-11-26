@@ -19,12 +19,14 @@ pub(crate) fn validate_flags(flags: &BTreeSet<String>) -> Result {
 #[derive(Clone)]
 pub(crate) struct Message {
     pub uid: u32,
+    pub modseq: u64,
     pub raw: Vec<u8>,
     pub flags: BTreeSet<String>,
 }
 
 pub(crate) struct Folder {
     pub next: u32,
+    pub highest_modseq: u64,
     pub messages: Vec<Message>,
 }
 
@@ -48,6 +50,7 @@ impl Store {
                             name.into(),
                             Folder {
                                 next: 1,
+                                highest_modseq: 1,
                                 messages: Vec::new(),
                             },
                         )
@@ -97,8 +100,10 @@ impl Store {
         mailbox.next = uid
             .checked_add(1)
             .ok_or(Error::Invalid("UID limit reached"))?;
+        mailbox.highest_modseq += 1;
         mailbox.messages.push(Message {
             uid,
+            modseq: mailbox.highest_modseq,
             raw: raw.to_vec(),
             flags,
         });
@@ -141,6 +146,7 @@ impl Store {
         if index >= folder.messages.len() {
             return Err(Error::Invalid("Unknown message"));
         }
+        folder.highest_modseq += 1;
         let message = folder.messages.remove(index);
         self.bytes -= message.raw.len();
         Ok(())
@@ -222,6 +228,24 @@ mod tests {
                 .append(ACCOUNTS[1], "INBOX", b"", BTreeSet::new())
                 .is_err()
         );
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod modseq_tests {
+    use super::*;
+
+    #[test]
+    fn expunging_the_newest_message_advances_the_mailbox_clock() -> Result {
+        let mut store = Store::new(false);
+        store.append(ACCOUNTS[0], "INBOX", b"one", BTreeSet::new())?;
+        store.append(ACCOUNTS[0], "INBOX", b"two", BTreeSet::new())?;
+        let before = store.folder(ACCOUNTS[0], "INBOX")?.highest_modseq;
+        store.remove(ACCOUNTS[0], "INBOX", 1)?;
+        let folder = store.folder(ACCOUNTS[0], "INBOX")?;
+        assert!(folder.highest_modseq > before);
+        assert!(folder.messages[0].modseq < before);
         Ok(())
     }
 }

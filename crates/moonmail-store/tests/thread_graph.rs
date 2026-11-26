@@ -311,7 +311,7 @@ fn migration_restarts_after_a_failed_page_without_reading_blobs() -> Result {
     }
     let db = f.db()?;
     db.execute_batch(concat!(
-        include_str!("fixtures/remove_sent_copy.sql"),
+        include_str!("fixtures/remove_after_v19.sql"),
         "DROP TABLE search_partitions; DROP TABLE keyword_rule_runs; DROP TABLE keyword_rules;"
     ))?;
     db.execute_batch("DROP TABLE occurrence_keywords; DROP TABLE keyword_labels; DROP TABLE keyword_operations; ALTER TABLE move_operations DROP COLUMN kind; DROP TABLE folder_operations; DROP TABLE thread_pending; DROP TABLE thread_edges; DROP TABLE thread_members; DROP TABLE thread_nodes; PRAGMA user_version=13;")?;
@@ -348,7 +348,7 @@ fn migration_restarts_after_a_failed_page_without_reading_blobs() -> Result {
         [ids[0].0 as i64],
     )?;
     db.execute_batch(concat!(
-        include_str!("fixtures/remove_sent_copy.sql"),
+        include_str!("fixtures/remove_after_v19.sql"),
         "DROP TABLE search_partitions; DROP TABLE keyword_rule_runs; DROP TABLE keyword_rules;"
     ))?;
     db.execute_batch("DROP TABLE occurrence_keywords; DROP TABLE keyword_labels; DROP TABLE keyword_operations; ALTER TABLE move_operations DROP COLUMN kind; DROP TABLE folder_operations; DROP TABLE thread_pending; DROP TABLE thread_edges; DROP TABLE thread_members; DROP TABLE thread_nodes; PRAGMA user_version=13;")?;

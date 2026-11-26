@@ -17,7 +17,7 @@ fn version_nineteen_migration_preserves_outbox_without_inventing_append_intent()
     let id = archive.queue(&draft, &draft.account, &blob, &["peer@example.org".into()])?;
     drop(archive);
     let db = rusqlite::Connection::open(dir.path().join("archive.sqlite3"))?;
-    db.execute_batch(include_str!("fixtures/remove_sent_copy.sql"))?;
+    db.execute_batch(include_str!("fixtures/remove_after_v19.sql"))?;
     db.execute_batch("PRAGMA user_version=19;")?;
     let archive = Archive::open(dir.path())?;
     let item = archive.outbox_item(id)?;

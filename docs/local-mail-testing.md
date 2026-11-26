@@ -117,12 +117,14 @@ This is not a general-purpose mail server or a full IMAP conformance oracle:
   and deliver to these accounts. LOGIN and AUTH PLAIN require TLS. No relay.
 - IMAP supports CAPABILITY, STARTTLS, LOGIN, LIST with empty reference and `*` or
   `%`, SELECT/EXAMINE, NOOP/CHECK/LOGOUT, APPEND with synchronizing literals,
-  UID FETCH/STORE, single-message UID COPY/MOVE, and UID EXPUNGE.
-- FETCH supports UID, FLAGS, RFC822.SIZE, INTERNALDATE, and full BODY[]/BODY.PEEK[].
+  UID SEARCH ALL, UID FETCH/STORE, single-message UID COPY/MOVE, and UID EXPUNGE.
+- CONDSTORE selections report HIGHESTMODSEQ. UID FETCH with CHANGEDSINCE
+  returns messages modified after the supplied sequence.
+- Multi-UID FETCH supports UID, FLAGS, RFC822.SIZE, INTERNALDATE, and full BODY[]/BODY.PEEK[].
   At most 16 requested items and one body item. Sequence-number operations,
   sections, partial bodies, macros, and unsupported items are rejected.
 - Fixed synthetic INTERNALDATE (`01-Jan-2026`); explicit APPEND dates are rejected.
-  No CREATE/RENAME/DELETE, SEARCH, IDLE, OAuth, CONDSTORE/QRESYNC, ordinary EXPUNGE,
+  No CREATE/RENAME/DELETE, IDLE, OAuth, QRESYNC, ordinary EXPUNGE,
   remote drafts, subscriptions, or unsolicited cross-session change notifications.
   Re-select/re-scan to observe other sessions' changes.
 - Valid unsupported commands return NO; malformed/oversized commands and
