@@ -28,7 +28,7 @@ fn search_scopes_before_paging_and_grouping_without_a_global_hit_cap() -> Result
         // Retired hits and hits in another folder both precede the inbox hits.
         if !(551..=1100).contains(&id) {
             transaction.execute(
-                "INSERT INTO occurrences VALUES (?1,?2,1,?2,?3,0)",
+                "INSERT INTO occurrences(mailbox_id,message_id,epoch,uid,seen,flagged) VALUES (?1,?2,1,?2,?3,0)",
                 rusqlite::params![if id <= 550 { other } else { inbox }, id, id % 2 == 0],
             )?;
         }
@@ -141,7 +141,10 @@ fn projection_upgrade_replays_cc_and_sender_names_and_failed_search_keeps_previo
     archive.acknowledge_index(sequence)?;
     drop(archive);
     let connection = rusqlite::Connection::open(directory.path().join("archive.sqlite3"))?;
-    connection.execute_batch(include_str!("fixtures/remove_sent_copy.sql"))?;
+    connection.execute_batch(concat!(
+        include_str!("fixtures/remove_gmail.sql"),
+        include_str!("fixtures/remove_sent_copy.sql")
+    ))?;
     connection.execute_batch(
         "DROP TABLE folder_operations; DROP TABLE thread_pending; DROP TABLE thread_edges; DROP TABLE thread_members; DROP TABLE thread_nodes;
          DROP TABLE search_sources; DROP TABLE saved_searches;

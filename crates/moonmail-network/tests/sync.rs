@@ -155,6 +155,7 @@ impl IncomingMail for Fake {
             epoch: 7,
             messages: (1..=2)
                 .map(|uid| RemoteMessage {
+                    gmail: None,
                     keywords: Vec::new(),
                     uid,
                     seen: false,

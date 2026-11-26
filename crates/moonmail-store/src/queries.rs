@@ -18,10 +18,11 @@ impl MailRepository for Archive {
     type Error = Error;
 
     fn mailboxes(&self) -> Result<Vec<Mailbox>> {
-        let mut statement = self.connection.prepare_cached("SELECT b.id,b.account,b.name,COUNT(o.message_id),COALESCE(SUM(o.seen=0),0),b.delimiter,b.selectable,COALESCE(b.user_role,b.server_role),b.epoch FROM mailboxes b LEFT JOIN occurrences o ON o.mailbox_id=b.id WHERE b.active=1 GROUP BY b.id ORDER BY b.name COLLATE NOCASE")?;
+        let mut statement = self.connection.prepare_cached("SELECT b.id,b.account,b.name,COUNT(o.message_id),COALESCE(SUM(o.seen=0),0),b.delimiter,b.selectable,COALESCE(b.user_role,b.server_role),b.epoch,b.sync_enabled FROM mailboxes b LEFT JOIN occurrences o ON o.mailbox_id=b.id WHERE b.active=1 GROUP BY b.id ORDER BY b.name COLLATE NOCASE")?;
         let rows = statement.query_map([], |row| {
             Ok(Mailbox {
                 epoch: row.get(8)?,
+                sync_enabled: row.get(9)?,
                 id: row.get(0)?,
                 account: row.get(1)?,
                 name: row.get(2)?,

@@ -22,6 +22,7 @@ pub struct Mailbox {
     /// Server hierarchy separator; None means a flat namespace.
     pub delimiter: Option<String>,
     pub selectable: bool,
+    pub sync_enabled: bool,
     /// Explicit user override, otherwise server SPECIAL-USE (INBOX is intrinsic).
     pub role: Option<MailboxRole>,
     pub total: u64,
@@ -39,6 +40,7 @@ pub enum MailboxRole {
     Trash,
     All,
     Flagged,
+    Important,
 }
 
 impl MailboxRole {
@@ -52,6 +54,7 @@ impl MailboxRole {
             Self::Trash => "trash",
             Self::All => "all",
             Self::Flagged => "flagged",
+            Self::Important => "important",
         }
     }
 
@@ -65,6 +68,7 @@ impl MailboxRole {
             "trash" => Self::Trash,
             "all" => Self::All,
             "flagged" => Self::Flagged,
+            "important" => Self::Important,
             _ => return None,
         })
     }

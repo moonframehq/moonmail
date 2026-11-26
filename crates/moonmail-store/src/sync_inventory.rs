@@ -4,13 +4,24 @@ use {
 };
 
 /// Metadata only; bodies are downloaded individually after a complete inventory.
+#[derive(Clone, Debug)]
 pub struct SyncMessage {
+    pub gmail: Option<GmailMetadata>,
     pub uid: u32,
     pub seen: bool,
     pub starred: bool,
     pub size: u32,
+    /// IMAP INTERNALDATE as UTC Unix seconds.
     pub received_at: i64,
     pub keywords: Vec<String>,
+}
+
+/// Gmail identifiers are unsigned 64-bit values. SQLite stores their big-endian bytes.
+#[derive(Clone, Debug)]
+pub struct GmailMetadata {
+    pub msgid: u64,
+    pub thrid: u64,
+    pub labels: Vec<String>,
 }
 
 impl Archive {
@@ -19,7 +30,7 @@ impl Archive {
     pub fn begin_sync_inventory(&self) -> Result<()> {
         self.connection.execute_batch("CREATE TEMP TABLE IF NOT EXISTS sync_inventory (
             uid INTEGER PRIMARY KEY, seen INTEGER NOT NULL, flagged INTEGER NOT NULL,
-             size INTEGER NOT NULL, received_at INTEGER NOT NULL);
+             size INTEGER NOT NULL, received_at INTEGER NOT NULL, gm_msgid BLOB, gm_thrid BLOB, labels TEXT);
              CREATE TEMP TABLE IF NOT EXISTS sync_keywords (uid INTEGER NOT NULL, keyword TEXT NOT NULL, PRIMARY KEY(uid,keyword));
             CREATE TEMP TABLE IF NOT EXISTS sync_scope (epoch INTEGER, upper_uid INTEGER, mailbox INTEGER, complete INTEGER);
              DELETE FROM sync_inventory; DELETE FROM sync_scope; DELETE FROM sync_keywords;")?;
@@ -54,8 +65,8 @@ impl Archive {
             return Err(Error::Invalid("Sync inventory scope changed"));
         }
         {
-            let mut insert =
-                transaction.prepare_cached("INSERT INTO sync_inventory VALUES (?1,?2,?3,?4,?5)")?;
+            let mut insert = transaction
+                .prepare_cached("INSERT INTO sync_inventory VALUES (?1,?2,?3,?4,?5,?6,?7,?8)")?;
             for message in messages {
                 for keyword in crate::keywords::normalize(&message.keywords)? {
                     transaction.execute(
@@ -68,7 +79,14 @@ impl Archive {
                     message.seen,
                     message.starred,
                     message.size,
-                    message.received_at
+                    message.received_at,
+                    message.gmail.as_ref().map(|g| g.msgid.to_be_bytes()),
+                    message.gmail.as_ref().map(|g| g.thrid.to_be_bytes()),
+                    message
+                        .gmail
+                        .as_ref()
+                        .map(|g| serde_json::to_string(&g.labels))
+                        .transpose()?
                 ])?;
             }
         }
@@ -101,14 +119,21 @@ impl Archive {
             seen=CASE WHEN EXISTS(SELECT 1 FROM flag_operations f WHERE f.mailbox_id=o.mailbox_id AND f.epoch=o.epoch AND f.uid=o.uid AND f.kind='seen') THEN seen ELSE (SELECT seen FROM sync_inventory s WHERE s.uid=o.uid) END,
             flagged=CASE WHEN EXISTS(SELECT 1 FROM flag_operations f WHERE f.mailbox_id=o.mailbox_id AND f.epoch=o.epoch AND f.uid=o.uid AND f.kind='flagged') THEN flagged ELSE (SELECT flagged FROM sync_inventory s WHERE s.uid=o.uid) END
             WHERE mailbox_id=?1 AND epoch=?2 AND uid IN (SELECT uid FROM sync_inventory)",params![mailbox,epoch])?;
+        if transaction.query_row(
+            "SELECT EXISTS(SELECT 1 FROM sync_inventory WHERE gm_msgid IS NOT NULL)",
+            [],
+            |row| row.get(0),
+        )? {
+            crate::gmail::reconcile(&transaction, mailbox, epoch)?;
+        }
         transaction.execute("UPDATE sync_scope SET mailbox=?1,complete=1", [mailbox])?;
         transaction.execute("DELETE FROM occurrence_keywords AS k WHERE k.mailbox_id=?1
             AND EXISTS(SELECT 1 FROM occurrences o JOIN sync_inventory s ON s.uid=o.uid WHERE o.mailbox_id=k.mailbox_id AND o.message_id=k.message_id AND o.epoch=?2)
             AND NOT EXISTS(SELECT 1 FROM keyword_operations f JOIN occurrences o ON o.mailbox_id=f.mailbox_id AND o.epoch=f.epoch AND o.uid=f.uid
-                WHERE o.mailbox_id=k.mailbox_id AND o.message_id=k.message_id AND f.keyword=k.keyword)",params![mailbox,epoch])?;
+                WHERE o.mailbox_id=k.mailbox_id AND o.message_id=k.message_id AND f.gmail=0 AND f.keyword=k.keyword)",params![mailbox,epoch])?;
         transaction.execute("INSERT OR IGNORE INTO occurrence_keywords SELECT o.mailbox_id,o.message_id,k.keyword
             FROM occurrences o JOIN sync_keywords k ON k.uid=o.uid WHERE o.mailbox_id=?1 AND o.epoch=?2
-            AND NOT EXISTS(SELECT 1 FROM keyword_operations f WHERE f.mailbox_id=o.mailbox_id AND f.epoch=o.epoch AND f.uid=o.uid AND f.keyword=k.keyword)",params![mailbox,epoch])?;
+            AND NOT EXISTS(SELECT 1 FROM keyword_operations f WHERE f.mailbox_id=o.mailbox_id AND f.epoch=o.epoch AND f.uid=o.uid AND f.gmail=0 AND f.keyword=k.keyword)",params![mailbox,epoch])?;
         // Retired epochs/UIDs cannot receive intent. Keep a visible diagnostic.
         transaction.execute("UPDATE keyword_operations AS f SET state='blocked',detail='Source UID/UIDVALIDITY no longer exists' WHERE mailbox_id=?1
             AND NOT EXISTS(SELECT 1 FROM occurrences o WHERE o.mailbox_id=f.mailbox_id AND o.epoch=f.epoch AND o.uid=f.uid)",[mailbox])?;
@@ -120,12 +145,28 @@ impl Archive {
     /// exclusive cursor advances even for oversized or vanished messages; a new
     /// scan starts afresh and retries those not durably ingested.
     pub fn missing_sync_messages(&self, before: u64) -> Result<Vec<SyncMessage>> {
-        let mut statement = self.connection.prepare_cached("SELECT s.uid,s.seen,s.flagged,s.size,s.received_at FROM sync_inventory s JOIN sync_scope c
+        let mut statement = self.connection.prepare_cached("SELECT s.uid,s.seen,s.flagged,s.size,s.received_at,s.gm_msgid,s.gm_thrid,s.labels FROM sync_inventory s JOIN sync_scope c
             WHERE c.complete=1 AND s.uid<?1 AND NOT EXISTS(SELECT 1 FROM occurrences o WHERE o.mailbox_id=c.mailbox AND o.epoch=c.epoch AND o.uid=s.uid)
             ORDER BY s.uid DESC LIMIT 100")?;
         let mut messages: Vec<SyncMessage> = statement
             .query_map([before.min(u64::from(u32::MAX) + 1) as i64], |row| {
                 Ok(SyncMessage {
+                    gmail: match row.get::<_, Option<[u8; 8]>>(5)? {
+                        Some(bytes) => Some(GmailMetadata {
+                            msgid: u64::from_be_bytes(bytes),
+                            thrid: u64::from_be_bytes(row.get(6)?),
+                            labels: serde_json::from_str(&row.get::<_, String>(7)?).map_err(
+                                |e| {
+                                    rusqlite::Error::FromSqlConversionFailure(
+                                        7,
+                                        rusqlite::types::Type::Text,
+                                        Box::new(e),
+                                    )
+                                },
+                            )?,
+                        }),
+                        None => None,
+                    },
                     uid: row.get(0)?,
                     seen: row.get(1)?,
                     starred: row.get(2)?,

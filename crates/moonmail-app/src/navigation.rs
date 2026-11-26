@@ -80,7 +80,7 @@ fn insert(nodes: &mut Vec<Folder>, parent: &str, parts: &[&str], mailbox: &Mailb
             MailboxRole::Junk => "ban",
             MailboxRole::Trash => "trash-2",
             MailboxRole::All => "mails",
-            MailboxRole::Flagged => "flag",
+            MailboxRole::Important | MailboxRole::Flagged => "flag",
         });
     } else {
         insert(&mut node.children, &node.key, remaining, mailbox);
@@ -99,6 +99,7 @@ mod tests {
             name: name.into(),
             delimiter: delimiter.map(str::to_owned),
             selectable,
+            sync_enabled: true,
             role: None,
             total: 1,
             unread: 1,

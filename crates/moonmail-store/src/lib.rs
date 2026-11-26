@@ -6,6 +6,7 @@ mod demo;
 mod drafts;
 mod error;
 mod folder_operations;
+mod gmail;
 mod identities;
 mod keywords;
 mod mailboxes;
@@ -37,6 +38,7 @@ pub use {
     },
     error::{Error, IngestError, Result, SearchError},
     folder_operations::{FolderEdit, FolderMember, FolderOperation, FolderOperationSummary},
+    gmail::valid_gmail_label,
     identities::Identity,
     keywords::{KeywordLabel, KeywordOperation},
     moves::{MoveOperation, MoveTarget},
@@ -45,5 +47,5 @@ pub use {
     partitions::{PartitionBucket, PartitionField, PartitionPage},
     rules::{KeywordRule, KeywordRuleRun},
     saved_searches::SavedSearch,
-    sync_inventory::SyncMessage,
+    sync_inventory::{GmailMetadata, SyncMessage},
 };

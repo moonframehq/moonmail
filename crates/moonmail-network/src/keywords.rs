@@ -27,14 +27,15 @@ pub(crate) fn apply<I: IncomingMail>(
                 continue;
             }
             crate::sync::check_cancel(cancelled)?;
-            match incoming
-                .keyword(&op.mailbox, op.epoch, op.uid, &op.keyword, op.value)
-                .map_err(SyncError::Incoming)?
-            {
+            let outcome = if op.gmail {
+                incoming.gmail_label(&op.mailbox, op.epoch, op.uid, &op.keyword, op.value)
+            } else {
+                incoming.keyword(&op.mailbox, op.epoch, op.uid, &op.keyword, op.value)
+            };
+            match outcome.map_err(SyncError::Incoming)? {
                 KeywordOutcome::Applied => archive.acknowledge_keyword(op.id)?,
                 KeywordOutcome::Unsupported => {
-                    archive
-                        .block_keyword(op.id, "Server does not permit this permanent keyword")?;
+                    archive.block_keyword(op.id, "Server does not permit this tag operation")?;
                     progress(format!(
                         "Keyword {} is unsupported in {}; review Tags",
                         op.keyword, op.mailbox

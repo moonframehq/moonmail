@@ -78,6 +78,7 @@ impl IncomingMail for Server {
             .ok_or_else(|| io::Error::other("missing folder"))?
             .iter()
             .map(|uid| RemoteMessage {
+                gmail: None,
                 keywords: Vec::new(),
                 received_at: 1_700_000_000 + i64::from(*uid),
                 uid: *uid,

@@ -9,6 +9,7 @@ use {
 #[derive(Debug, Serialize)]
 pub struct KeywordOperation {
     pub id: i64,
+    pub gmail: bool,
     pub mailbox: String,
     pub epoch: u32,
     pub uid: u32,
@@ -55,10 +56,10 @@ pub(crate) fn replace_observed(
     // must never silently erase the user's visible desired state.
     db.execute("DELETE FROM occurrence_keywords AS k WHERE k.mailbox_id=?1 AND k.message_id=?2 AND EXISTS(
         SELECT 1 FROM keyword_operations f JOIN occurrences o ON o.mailbox_id=f.mailbox_id AND o.epoch=f.epoch AND o.uid=f.uid
-        WHERE o.mailbox_id=k.mailbox_id AND o.message_id=k.message_id AND f.keyword=k.keyword AND f.value=0)",params![mailbox,message])?;
+        WHERE o.mailbox_id=k.mailbox_id AND o.message_id=k.message_id AND f.keyword=k.keyword AND f.gmail=0 AND f.value=0)",params![mailbox,message])?;
     db.execute("INSERT OR IGNORE INTO occurrence_keywords SELECT o.mailbox_id,o.message_id,f.keyword
         FROM occurrences o JOIN keyword_operations f ON f.mailbox_id=o.mailbox_id AND f.epoch=o.epoch AND f.uid=o.uid
-        WHERE o.mailbox_id=?1 AND o.message_id=?2 AND f.value=1",params![mailbox,message])?;
+        WHERE o.mailbox_id=?1 AND o.message_id=?2 AND f.gmail=0 AND f.value=1",params![mailbox,message])?;
     Ok(())
 }
 
@@ -143,11 +144,12 @@ impl Archive {
 
     /// Keyset-page unresolved operations, including blocked diagnostics.
     pub fn keyword_operations(&self, account: &str, after: i64) -> Result<Vec<KeywordOperation>> {
-        let mut statement=self.connection.prepare("SELECT f.id,b.name,f.epoch,f.uid,f.keyword,f.value,f.state,f.detail FROM keyword_operations f JOIN mailboxes b ON b.id=f.mailbox_id WHERE b.account=?1 AND f.id>?2 ORDER BY f.id LIMIT 100")?;
+        let mut statement=self.connection.prepare("SELECT f.id,b.name,f.epoch,f.uid,f.keyword,f.value,f.state,f.detail,f.gmail FROM keyword_operations f JOIN mailboxes b ON b.id=f.mailbox_id WHERE b.account=?1 AND f.id>?2 ORDER BY f.id LIMIT 100")?;
         Ok(statement
             .query_map(params![account, after], |r| {
                 Ok(KeywordOperation {
                     id: r.get(0)?,
+                    gmail: r.get(8)?,
                     mailbox: r.get(1)?,
                     epoch: r.get(2)?,
                     uid: r.get(3)?,
@@ -218,7 +220,7 @@ pub(crate) fn set_one(db: &Connection, id: MessageId, keyword: &str, value: bool
             return Err(Error::Invalid("At most 128 keywords per occurrence"));
         }
     }
-    db.execute("DELETE FROM keyword_operations WHERE keyword=?2 AND EXISTS(SELECT 1 FROM occurrences o WHERE o.message_id=?1 AND o.mailbox_id=keyword_operations.mailbox_id AND o.epoch=keyword_operations.epoch AND o.uid=keyword_operations.uid)",params![id.0 as i64,keyword])?;
+    db.execute("DELETE FROM keyword_operations WHERE gmail=0 AND keyword=?2 AND EXISTS(SELECT 1 FROM occurrences o WHERE o.message_id=?1 AND o.mailbox_id=keyword_operations.mailbox_id AND o.epoch=keyword_operations.epoch AND o.uid=keyword_operations.uid)",params![id.0 as i64,keyword])?;
     db.execute("INSERT INTO keyword_operations(mailbox_id,epoch,uid,keyword,value) SELECT mailbox_id,epoch,uid,?2,?3 FROM occurrences WHERE message_id=?1 AND uid IS NOT NULL",params![id.0 as i64,keyword,value])?;
     if value {
         db.execute("INSERT OR IGNORE INTO occurrence_keywords SELECT mailbox_id,message_id,?2 FROM occurrences WHERE message_id=?1",params![id.0 as i64,keyword])?;

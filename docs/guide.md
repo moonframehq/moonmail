@@ -299,8 +299,21 @@ and [Gmail XOAUTH2](https://developers.google.com/workspace/gmail/imap/xoauth2-p
 
 Gmail labels exposed through IMAP appear as folders. Advertised `\All` maps to
 Archive even with localized names. Gmail saves its own Sent copies by default.
-Gmail-specific label editing, X-GM-MSGID deduplication, and remote draft upload are
-not implemented; this uses the standard IMAP folder model.
+Drafts stay local until submission.
+
+### Folder sync and Gmail labels
+
+Move & folders → Manage folders lists every discovered folder. Pause sync to keep a folder in
+the tree with its last local contents. Enable sync to refresh it on the next
+run. Newly discovered Gmail Important folders start paused. All Mail starts
+enabled so archived mail remains available.
+
+Gmail inventory requests the message ID, thread ID and labels together. A
+message already downloaded through one folder can appear in another without a
+second body download. In Tags & keywords, the Gmail controls edit server labels
+on the selected messages. Pending operations survive restart and run on Sync.
+Gmail Archive removes the Inbox label unless an explicit Archive folder override
+is configured.
 
 ### Microsoft, iCloud, Yahoo, AOL, and custom servers
 

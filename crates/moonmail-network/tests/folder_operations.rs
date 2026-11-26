@@ -66,6 +66,7 @@ impl IncomingMail for Server {
             messages: uids
                 .iter()
                 .map(|uid| RemoteMessage {
+                    gmail: None,
                     keywords: Vec::new(),
                     uid: *uid,
                     seen: true,

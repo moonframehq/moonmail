@@ -415,3 +415,29 @@ fn plaintext_auth_is_rejected_and_examine_cannot_mutate_flags() -> Result {
     session.logout()?;
     Ok(())
 }
+
+#[test]
+fn disabled_folder_is_listed_without_selecting_it() -> Result {
+    let fixture = Fixture::new(false, false)?;
+    let peer = fixture.peer(0, TlsMode::Implicit)?;
+    let archive = Archive::open(peer.root.path())?;
+    let inbox = archive.mailbox(&peer.account.email, "INBOX")?;
+    archive.set_sync_enabled(inbox, false)?;
+    fixture.sync(&peer)?;
+    let folders = archive.mailboxes()?;
+    assert!(
+        folders
+            .iter()
+            .any(|f| f.id == inbox && f.epoch == 0 && !f.sync_enabled)
+    );
+    assert!(folders.iter().any(|f| f.id != inbox && f.epoch != 0));
+    archive.set_sync_enabled(inbox, true)?;
+    fixture.sync(&peer)?;
+    assert!(
+        archive
+            .mailboxes()?
+            .iter()
+            .any(|f| f.id == inbox && f.epoch != 0)
+    );
+    Ok(())
+}
