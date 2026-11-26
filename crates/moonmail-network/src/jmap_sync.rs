@@ -1,11 +1,12 @@
+mod content;
+
 use {
     crate::{
         Error, Result,
         jmap::{Client, JmapError, field},
     },
-    moonmail_core::{MailboxRole, canonical_keyword},
-    moonmail_mime::StalwartParser,
-    moonmail_store::{Archive, FileBlobs, IncomingMessage, JmapFolder},
+    moonmail_core::MailboxRole,
+    moonmail_store::{Archive, FileBlobs, JmapFolder},
     serde::Deserialize,
     serde_json::{Value, json},
     std::collections::{BTreeSet, HashMap},
@@ -107,13 +108,14 @@ impl Client {
         stop: impl Fn() -> bool,
     ) -> Result<()> {
         cancel(&stop)?;
-        archive.bind_jmap(account, &self.account)?;
-        let (folders, state) = archive.jmap_states(account)?;
+        let (folders, state) = archive.bound_jmap_states(account, &self.account)?;
         // An interrupted initial scan may have encountered a newly created mailbox.
         if folders.is_none() || state.is_none() {
             self.refresh_folders(archive, account)?;
         }
-        self.flush_edits(account, archive, &stop)?;
+        if archive.mail_edits_pending(account)? {
+            self.flush_edits(account, archive, &stop)?;
+        }
         let mut sync = Sync {
             client: self,
             account,
@@ -162,10 +164,13 @@ impl<F: Fn() -> bool> Sync<'_, F> {
         let mut query_state = None;
         loop {
             cancel(self.stop)?;
-            let query = self.client.method(
-                "Email/query",
-                json!({"position":position,"limit":self.client.batch}),
-            )?;
+            let account = &self.client.account;
+            let mut replies = self.client.calls(&[
+                json!(["Email/query",{"accountId":account,"position":position,"limit":self.client.batch},"page"]),
+                json!(["Email/get",{"accountId":account,"#ids":{"resultOf":"page","name":"Email/query","path":"/ids"},"properties":PROPERTIES},"messages"]),
+            ], false)?.into_iter();
+            let mut query = replies.next().ok_or(JmapError::Protocol)?;
+            let result = replies.next().ok_or(JmapError::Protocol)?;
             let page = field(&query, "queryState")?;
             if query_state.as_deref().is_some_and(|s| s != page) {
                 return Err(Error::Invalid(
@@ -173,18 +178,15 @@ impl<F: Fn() -> bool> Sync<'_, F> {
                 ));
             }
             query_state = Some(page.to_owned());
-            let ids: Vec<String> = decode(query["ids"].clone())?;
+            let ids: Vec<String> = decode(query["ids"].take())?;
             if query["position"].as_u64() != Some(position as u64) || ids.len() > self.client.batch
             {
                 return Err(JmapError::Protocol.into());
             }
+            self.apply(&ids, result, true)?;
             if ids.is_empty() {
                 break;
             }
-            let result = self
-                .client
-                .method("Email/get", json!({"ids":ids,"properties":PROPERTIES}))?;
-            self.apply(&ids, result, true)?;
             position += ids.len();
         }
         self.archive
@@ -245,88 +247,18 @@ impl<F: Fn() -> bool> Sync<'_, F> {
             replies.next().ok_or(JmapError::Protocol)?,
             false,
         )?);
-        self.archive.checkpoint_jmap(
-            self.account,
-            &changes.new_state,
-            folder_checkpoint,
-            &destroyed,
-            false,
-        )?;
+        if changes.new_state != email
+            || folder_checkpoint.is_some_and(|new| new != folders)
+            || !destroyed.is_empty()
+        {
+            self.archive.checkpoint_jmap(
+                self.account,
+                &changes.new_state,
+                folder_checkpoint,
+                &destroyed,
+                false,
+            )?;
+        }
         Ok(changes.has_more_changes || (counts_only && folder_changes.has_more_changes))
-    }
-    fn apply(&mut self, ids: &[String], value: Value, inventory: bool) -> Result<Vec<String>> {
-        let emails: Emails = decode(value)?;
-        let observed: BTreeSet<_> = emails
-            .list
-            .iter()
-            .map(|e| &e.id)
-            .chain(&emails.not_found)
-            .collect();
-        if observed != ids.iter().collect() {
-            return Err(JmapError::Protocol.into());
-        }
-        let folders: HashMap<_, _> = self
-            .archive
-            .jmap_folder_map(self.account)?
-            .into_iter()
-            .map(|(key, id, _)| (key, id))
-            .collect();
-        for email in emails.list {
-            cancel(self.stop)?;
-            let locations: Vec<_> = email
-                .mailbox_ids
-                .keys()
-                .map(|key| folders.get(key).copied().ok_or(JmapError::Protocol))
-                .collect::<std::result::Result<_, _>>()?;
-            let first = *locations.first().ok_or(JmapError::Protocol)?;
-            let uid = self.archive.jmap_uid(self.account, &email.id)?;
-            let seen = email.keywords.contains_key("$seen");
-            let flagged = email.keywords.contains_key("$flagged");
-            let keywords: Vec<_> = email
-                .keywords
-                .keys()
-                .filter(|k| k.as_str() != "$seen" && k.as_str() != "$flagged")
-                .filter_map(|k| canonical_keyword(k))
-                .collect();
-            let message = if let Some(id) = self.archive.jmap_message(self.account, &email.id)? {
-                id
-            } else {
-                if email.size > 64 * 1024 * 1024 {
-                    return Err(Error::IncompleteSync(1));
-                }
-                let raw = self.client.download(&email.blob_id)?;
-                if raw.len() as u64 != email.size {
-                    return Err(JmapError::Protocol.into());
-                }
-                let received_at = time::OffsetDateTime::parse(
-                    &email.received_at,
-                    &time::format_description::well_known::Rfc3339,
-                )
-                .map_err(|_| JmapError::Protocol)?
-                .unix_timestamp();
-                self.archive.ingest_with_keywords(
-                    &StalwartParser::default(),
-                    self.blobs,
-                    IncomingMessage {
-                        account: self.account,
-                        mailbox: first,
-                        origin: &format!("jmap:{}", email.id),
-                        epoch: 0,
-                        uid: Some(uid),
-                        seen,
-                        starred: flagged,
-                        received_at,
-                        raw: &raw,
-                    },
-                    &keywords,
-                )?
-            };
-            self.archive
-                .observe_jmap(message, uid, &locations, seen, flagged, &keywords)?;
-            if inventory {
-                self.archive.stage_jmap_id(&email.id)?;
-            }
-        }
-        Ok(emails.not_found)
     }
 }

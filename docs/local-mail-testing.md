@@ -139,3 +139,11 @@ This is not a general-purpose mail server or a full IMAP conformance oracle:
 
 Keep [live Gmail testing](gmail-testing.md) as a separate optional interoperability
 check; this fixture cannot establish Gmail or other provider compatibility.
+
+## Independent Stalwart interop
+
+Run `just test-stalwart-imap-smtp` with Python 3, OpenSSL 3 or later, and the pinned Rust toolchain. The runner downloads the checksum-pinned Stalwart 0.15.5 binary on macOS arm64 or Linux x86-64. Set `STALWART_BIN` to use an existing Stalwart executable. Every run provisions two temporary accounts, a private CA, four loopback mail listeners and a fresh SQLite store. Both clients validate the server certificate against that CA and verify its hostname.
+
+Alice sends Bob a UTF-8 message with a binary attachment through the durable Outbox. Bob's IMAP IDLE worker must observe it within 30 seconds and advance its durable CONDSTORE checkpoint; the polling interval is 15 minutes. Bob replies through SMTP. The suite reopens both archives and compares the delivered MIME with the frozen originals, allowing SMTP trace headers and framing. It checks Sent APPEND, remote flags and keywords, folder creation, renaming and deletion, UID COPY and MOVE, and isolation between the accounts. The complete exchange runs four times, covering implicit TLS and STARTTLS with both password authentication and locally issued OAuth bearer grants.
+
+The local-mail CI workflow runs this suite alongside the native daemon tests and the two-account Stalwart JMAP suite. `just test-stalwart` runs the JMAP suite on its own.

@@ -13,7 +13,7 @@ pub struct Archive {
     pub(crate) search_predicate: Option<crate::predicates::CompiledPredicate>,
 }
 
-pub struct IncomingMessage<'a> {
+pub struct IncomingMessage<'a, Body = &'a [u8]> {
     pub account: &'a str,
     pub mailbox: i64,
     pub origin: &'a str,
@@ -24,7 +24,29 @@ pub struct IncomingMessage<'a> {
     /// Source timestamp; IMAP uses INTERNALDATE. Zero for a local import with no
     /// known source timestamp remains unknown in received_at metadata.
     pub received_at: i64,
-    pub raw: &'a [u8],
+    pub raw: Body,
+}
+
+/// Parsed metadata and the immutable blob produced from the same bytes. A worker
+/// can prepare this before taking the SQLite writer, including on another thread.
+pub struct StoredMime {
+    parsed: ParsedMessage,
+    hash: String,
+}
+
+impl StoredMime {
+    pub fn prepare<P: MimeParser, B: BlobStore>(
+        parser: &P,
+        blobs: &B,
+        raw: &[u8],
+    ) -> std::result::Result<Self, IngestError<P::Error, B::Error>> {
+        if raw.len() > 64 * 1024 * 1024 {
+            return Err(Error::Invalid("message exceeds 64 MiB limit").into());
+        }
+        let parsed = parser.parse(raw).map_err(IngestError::Parser)?;
+        let hash = blobs.put(raw).map_err(IngestError::Blob)?;
+        Ok(Self { parsed, hash })
+    }
 }
 
 enum Source<'a> {
@@ -251,25 +273,48 @@ impl Archive {
         source: Source<'_>,
     ) -> std::result::Result<MessageId, IngestError<P::Error, B::Error>> {
         let keywords = crate::keywords::normalize(keywords)?;
-        if incoming.raw.len() > 64 * 1024 * 1024 {
-            return Err(Error::Invalid("message exceeds 64 MiB limit").into());
-        }
-        let parsed = parser.parse(incoming.raw).map_err(IngestError::Parser)?;
-        let hash = blobs.put(incoming.raw).map_err(IngestError::Blob)?;
-        self.insert_parsed(incoming, parsed, &hash, &keywords, gmail, source)
-            .map_err(IngestError::Store)
+        let stored = StoredMime::prepare(parser, blobs, incoming.raw)?;
+        self.insert_parsed(
+            IncomingMessage {
+                raw: stored,
+                account: incoming.account,
+                mailbox: incoming.mailbox,
+                origin: incoming.origin,
+                epoch: incoming.epoch,
+                uid: incoming.uid,
+                seen: incoming.seen,
+                starred: incoming.starred,
+                received_at: incoming.received_at,
+            },
+            &keywords,
+            gmail,
+            source,
+        )
+        .map_err(IngestError::Store)
+    }
+
+    pub fn ingest_stored_with_keywords(
+        &mut self,
+        incoming: IncomingMessage<'_, StoredMime>,
+        keywords: &[String],
+    ) -> Result<MessageId> {
+        self.insert_parsed(
+            incoming,
+            &crate::keywords::normalize(keywords)?,
+            None,
+            Source::Regular,
+        )
     }
 
     fn insert_parsed(
         &mut self,
-        incoming: IncomingMessage<'_>,
-        parsed: ParsedMessage,
-        hash: &str,
+        incoming: IncomingMessage<'_, StoredMime>,
         keywords: &[String],
         gmail: Option<&crate::GmailMetadata>,
         source: Source<'_>,
     ) -> Result<MessageId> {
-        let text = parsed.text_body.clone().unwrap_or_else(|| {
+        let StoredMime { mut parsed, hash } = incoming.raw;
+        let text = parsed.text_body.take().unwrap_or_else(|| {
             parsed
                 .html_body
                 .as_deref()
@@ -278,9 +323,8 @@ impl Archive {
         });
         let snippet = text
             .split_whitespace()
-            .collect::<Vec<_>>()
-            .join(" ")
-            .chars()
+            .flat_map(|word| std::iter::once(' ').chain(word.chars()))
+            .skip(1)
             .take(180)
             .collect::<String>();
         let sender = parsed
