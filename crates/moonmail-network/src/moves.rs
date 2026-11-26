@@ -11,8 +11,31 @@ pub(crate) fn apply_moves<I: IncomingMail>(
     cancelled: &impl Fn() -> bool,
 ) -> Result<(), SyncError<I::Error>> {
     use moonmail_core::MailRepository;
+    let mut batch = archive.pending_moves(account)?;
+    if batch.is_empty() {
+        return Ok(());
+    }
     let folders = archive.mailboxes()?;
-    for operation in archive.pending_moves(account)? {
+    while !batch.is_empty() {
+        apply_batch(
+            incoming, account, archive, progress, cancelled, &folders, batch,
+        )?;
+        crate::sync::check_cancel(cancelled)?;
+        batch = archive.pending_moves(account)?;
+    }
+    Ok(())
+}
+
+fn apply_batch<I: IncomingMail>(
+    incoming: &mut I,
+    account: &str,
+    archive: &mut Archive,
+    progress: &mut impl FnMut(String),
+    cancelled: &impl Fn() -> bool,
+    folders: &[moonmail_core::Mailbox],
+    batch: Vec<MoveOperation>,
+) -> Result<(), SyncError<I::Error>> {
+    for operation in batch {
         crate::sync::check_cancel(cancelled)?;
         if !folders
             .iter()

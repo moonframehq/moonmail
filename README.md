@@ -111,8 +111,8 @@ just ci
 - It runs on macOS only, and there is no signed release.
 - Sign in with Google or Microsoft needs your own imported OAuth client. Gmail
   also works with an app password.
-- New mail arrives on Sync or on the timer. IDLE push notifications and
-  million-message performance measurements are still pending.
+- INBOX supports IMAP IDLE. Folder reconciliation scans UID metadata and has
+  not been benchmarked on a million-message account. CONDSTORE and QRESYNC remain unimplemented.
 - No POP3, Exchange (EWS) or Microsoft Graph, and no Gmail-specific labels.
 - Composing is plain text. Sync exchanges drafts with the account’s mapped Drafts folder.
 - Only one composer window at a time.

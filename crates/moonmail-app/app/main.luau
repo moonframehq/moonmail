@@ -521,7 +521,7 @@ return mod {
 			}
 		elseif state.pane == "organize" then
 			local items = { ui.text { "Move & folders", class = "title" },
-				ui.text { "Move the selected message or checked rows. Remote moves run on the next Sync; local demo/import moves apply immediately.", class = "muted" },
+				ui.text { "Move the selected message or checked rows. Remote moves upload while sync is active.", class = "muted" },
 				ui.text { "Archive and Trash use server folder roles. Assign an override below if a role is missing or ambiguous.", class = "muted" },
 				ui.row { action("Archive", "archive_messages"), action("Trash", "trash_messages"), ui.button { label = "Manage folders…", msg = "folders", small = true }, ui.button { label = "Mail operations", msg = "operations", small = true }, ui.button { label = "Back to mail", msg = "mail", small = true } },
 				ui.row {
@@ -783,7 +783,7 @@ return mod {
 				ui.spacer {}, action("Clear selection", "clear_selection"),
 			} else nil,
 		}
-		local status_bar = ui.row { class = "status", height = 22, shrink = false, align = "center", ui.text { mail.status or "Opening local archive…" }, ui.spacer {}, ui.text { "⌘N Compose   ⌘R Sync   ⌘1/2/3 Layout" } }
+		local status_bar = ui.row { class = "status", height = 22, shrink = false, align = "center", ui.text { mail.status or "Opening local archive…" }, ui.spacer {}, ui.text { mail.sync_schedule or "", tone = "muted" } }
 
 		if layout == "mailmate" then
 			return ui.column { grow = true, gap = "none",

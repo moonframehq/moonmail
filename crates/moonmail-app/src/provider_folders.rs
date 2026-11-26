@@ -97,7 +97,8 @@ impl Mail {
                         "Connect this account before queuing a server folder change"
                     );
                     self.archive_mut()?.queue_folder_edit(account, edit)?;
-                    self.status = "Folder change queued for next Sync".into();
+                    self.workers.flush(account);
+                    self.status = "Folder change queued".into();
                 }
                 if let Some(id) = self.query.mailbox
                     && !self

@@ -11,7 +11,6 @@ mod navigation;
 mod page;
 mod provider;
 mod reader_resources;
-mod sync_schedule;
 
 use {
     anyhow::Result,

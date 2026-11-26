@@ -37,6 +37,9 @@ impl Archive {
     pub fn open(root: impl AsRef<Path>) -> Result<Self> {
         std::fs::create_dir_all(root.as_ref())?;
         let mut connection = Connection::open(root.as_ref().join("archive.sqlite3"))?;
+        // Concurrent account writers must acquire the write reservation before
+        // reading preconditions, avoiding un-retryable WAL snapshot upgrades.
+        connection.set_transaction_behavior(rusqlite::TransactionBehavior::Immediate);
         connection.busy_timeout(Duration::from_secs(10))?;
         connection.pragma_update(None, "journal_mode", "WAL")?;
         connection.pragma_update(None, "synchronous", "FULL")?;

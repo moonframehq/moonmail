@@ -109,9 +109,10 @@ impl Archive {
                  FROM sync_scope c
                  WHERE c.complete AND c.mailbox=?3 AND (c.epoch<>remote_epoch
                  OR (remote_uid<=c.upper_uid
-                 AND NOT EXISTS(SELECT 1
-                 FROM sync_inventory s
-                 WHERE s.uid=remote_uid))))",
+                 AND CASE WHEN c.kind='full' OR remote_uid>c.base_upper THEN
+                     NOT EXISTS(SELECT 1 FROM sync_inventory s WHERE s.uid=remote_uid)
+                 WHEN c.kind='membership' THEN NOT EXISTS(SELECT 1 FROM sync_live s WHERE s.uid=remote_uid)
+                 ELSE EXISTS(SELECT 1 FROM sync_vanished s WHERE remote_uid BETWEEN s.lo AND s.hi) END)))",
             params![account, folder, mailbox],
         )?;
         tx.execute("DELETE FROM drafts WHERE account=?1 AND remote_mailbox=?2 AND remote_uid IS NULL AND dirty=0",params![account,folder])?;

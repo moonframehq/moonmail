@@ -70,6 +70,32 @@ impl Wire {
         }
         Ok(bytes)
     }
+    pub fn idle_timeout(&mut self, timeout: std::time::Duration) -> Result {
+        match self.reader()?.get_ref() {
+            Stream::Plain(socket) => socket.set_read_timeout(Some(timeout))?,
+            Stream::Tls(tls) => tls.sock.set_read_timeout(Some(timeout))?,
+        }
+        Ok(())
+    }
+
+    // Preserve partial DONE across socket timeouts.
+    pub fn idle_done(&mut self, bytes: &mut Vec<u8>) -> Result<bool> {
+        let left = 6usize.saturating_sub(bytes.len());
+        match self.reader()?.take(left as u64).read_until(b'\n', bytes) {
+            Err(e)
+                if matches!(
+                    e.kind(),
+                    io::ErrorKind::TimedOut | io::ErrorKind::WouldBlock
+                ) && bytes.len() < 6 =>
+            {
+                Ok(false)
+            },
+            Err(e) => Err(e.into()),
+            Ok(_) if bytes.eq_ignore_ascii_case(b"DONE\r\n") => Ok(true),
+            Ok(_) => Err(Error::Invalid("Expected DONE")),
+        }
+    }
+
     pub fn literal(&mut self, length: usize) -> Result<Vec<u8>> {
         if length > crate::store::MAX_MESSAGE {
             return Err(Error::Invalid("Oversized literal"));

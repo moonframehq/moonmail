@@ -75,7 +75,10 @@ fn migration_and_lost_append_receipt_preserve_newer_edits_and_discard_intent() -
     };
     Archive::open(dir.path())?.save_draft(&draft)?;
     let db = rusqlite::Connection::open(dir.path().join("archive.sqlite3"))?;
-    db.execute_batch(concat!(include_str!("fixtures/remove_checkpoint.sql"), include_str!("fixtures/remove_remote_drafts.sql")))?;
+    db.execute_batch(concat!(
+        include_str!("fixtures/remove_checkpoint.sql"),
+        include_str!("fixtures/remove_remote_drafts.sql")
+    ))?;
     db.execute_batch("PRAGMA user_version=21")?;
     let mut archive = Archive::open(dir.path())?;
     let (_, revision) = archive

@@ -55,7 +55,7 @@ impl Archive {
             uid INTEGER PRIMARY KEY, seen INTEGER NOT NULL, flagged INTEGER NOT NULL,
              size INTEGER, received_at INTEGER, gm_msgid BLOB, gm_thrid BLOB, labels TEXT);
              CREATE TEMP TABLE IF NOT EXISTS sync_keywords (uid INTEGER NOT NULL, keyword TEXT NOT NULL, PRIMARY KEY(uid,keyword));
-            CREATE TEMP TABLE IF NOT EXISTS sync_scope (epoch INTEGER, upper_uid INTEGER, mailbox INTEGER, complete INTEGER, generation INTEGER);
+            CREATE TEMP TABLE IF NOT EXISTS sync_scope (epoch INTEGER, upper_uid INTEGER, mailbox INTEGER, complete INTEGER, generation INTEGER, base_upper INTEGER, kind TEXT);
              CREATE TEMP TABLE IF NOT EXISTS sync_base(mailbox INTEGER, generation INTEGER);
              DELETE FROM sync_base;
              CREATE TEMP TABLE IF NOT EXISTS sync_live(uid INTEGER PRIMARY KEY);
@@ -92,7 +92,7 @@ impl Archive {
         }
         let transaction = self.connection.transaction()?;
         transaction.execute(
-            "INSERT INTO sync_scope SELECT ?1,?2,NULL,0,NULL WHERE NOT EXISTS(SELECT 1 FROM sync_scope)",
+            "INSERT INTO sync_scope SELECT ?1,?2,NULL,0,NULL,NULL,NULL WHERE NOT EXISTS(SELECT 1 FROM sync_scope)",
             params![epoch, upper_uid],
         )?;
         verify_scope(&transaction, epoch, upper_uid)?;
@@ -280,7 +280,12 @@ impl Archive {
         )? {
             crate::gmail::reconcile(&transaction, mailbox, epoch)?;
         }
-        transaction.execute("UPDATE sync_scope SET mailbox=?1,complete=1,generation=(SELECT inventory_generation FROM mailboxes WHERE id=?1)", [mailbox])?;
+        let (base_upper, mode) = match kind {
+            InventoryKind::Full => (0, "full"),
+            InventoryKind::Membership(base) => (base.upper, "membership"),
+            InventoryKind::Vanished(base) => (base.upper, "vanished"),
+        };
+        transaction.execute("UPDATE sync_scope SET mailbox=?1,complete=1,generation=(SELECT inventory_generation FROM mailboxes WHERE id=?1),base_upper=?2,kind=?3", params![mailbox,base_upper,mode])?;
         transaction.execute("DELETE FROM occurrence_keywords AS k WHERE k.mailbox_id=?1
             AND EXISTS(SELECT 1 FROM occurrences o JOIN sync_inventory s ON s.uid=o.uid WHERE o.mailbox_id=k.mailbox_id AND o.message_id=k.message_id AND o.epoch=?2)
             AND NOT EXISTS(SELECT 1 FROM keyword_operations f JOIN occurrences o ON o.mailbox_id=f.mailbox_id AND o.epoch=f.epoch AND o.uid=f.uid

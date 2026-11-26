@@ -12,11 +12,7 @@ use {
     std::{
         collections::{HashMap, HashSet},
         path::PathBuf,
-        sync::{
-            Arc,
-            atomic::{AtomicBool, Ordering},
-            mpsc::{self, Receiver},
-        },
+        sync::mpsc::{self, Receiver},
     },
 };
 
@@ -73,7 +69,7 @@ mod relationship_tests;
 
 enum Event {
     Progress(String),
-    Done(std::result::Result<(), String>, bool),
+    Done(std::result::Result<(), String>),
 }
 
 pub struct Mail {
@@ -110,9 +106,7 @@ pub struct Mail {
     identity_new_id: String,
     identity_account: Option<String>,
     job: Option<Receiver<Event>>,
-    check_jmap_edits: bool,
-    sync_cancel: Option<Arc<AtomicBool>>,
-    sync_schedule: crate::sync_schedule::SyncSchedule,
+    workers: sync::Workers,
     status: String,
     error: String,
     html_url: String,
@@ -172,9 +166,7 @@ impl Mail {
             identity_new_id: uuid::Uuid::new_v4().to_string(),
             identity_account: None,
             job: None,
-            check_jmap_edits: false,
-            sync_cancel: None,
-            sync_schedule: crate::sync_schedule::SyncSchedule::default(),
+            workers: sync::Workers::default(),
             status: "Local mail, at your pace".into(),
             error: String::new(),
             html_url: String::new(),
@@ -267,7 +259,7 @@ impl Mail {
         self.reader_revision = self.reader_revision.wrapping_add(1);
         if self.preferences.mark_read && !self.archive()?.has_pending_move(id)? {
             self.archive_mut()?.set_flag(id, "seen", true)?;
-            self.check_jmap_edits = true;
+            self.flush_messages(&[id])?;
         }
         let detail = self.archive()?.detail(id)?;
         let links = crate::reader_resources::links(&detail.text, detail.html.as_deref())?;
@@ -398,8 +390,9 @@ impl Mail {
         self.partition_snapshot(&mut snapshot)?;
         snapshot["columns_key"] = json!(serde_json::to_string(&self.preferences.columns)?);
         snapshot["outbox_count"] = json!(archive.outbox_count()?);
-        snapshot["syncing"] = json!(self.sync_cancel.is_some());
-        snapshot["sync_schedule"] = json!(self.sync_schedule.label());
+        snapshot["syncing"] = json!(self.workers.running());
+        snapshot["account_sync_status"] = json!(self.workers.details());
+        snapshot["sync_schedule"] = json!(self.workers.label());
         snapshot["saved_searches"] = json!(archive.saved_searches()?);
         snapshot["people"] = json!(self.people);
         snapshot["active_saved_search"] = json!(self.active_saved_search);
@@ -503,15 +496,7 @@ impl Mail {
             .name("moonmail-network".into())
             .spawn(move || {
                 let result = operation(root, sender.clone());
-                let retryable = result
-                    .as_ref()
-                    .err()
-                    .and_then(|error| error.downcast_ref::<moonmail_network::Error>())
-                    .is_some_and(moonmail_network::Error::retryable_sync);
-                let _ = sender.send(Event::Done(
-                    result.map_err(|error| format!("{error:#}")),
-                    retryable,
-                ));
+                let _ = sender.send(Event::Done(result.map_err(|error| format!("{error:#}"))));
             })?;
         self.job = Some(receiver);
         self.status = "Working…".into();
@@ -591,6 +576,7 @@ impl Mail {
                 let count = self
                     .archive_mut()?
                     .set_thread_seen(id, action == "thread_read")?;
+                self.flush_messages(&[id])?;
                 self.selected = Some(self.archive()?.detail(id)?);
                 self.refresh()?;
                 self.status = format!(
@@ -610,14 +596,14 @@ impl Mail {
                     .and_then(Data::as_bool)
                     .context("Choose a flag value")?;
                 let count = self.archive_mut()?.set_flags(&ids, &text("kind"), value)?;
+                self.flush_messages(&ids)?;
                 self.refresh()?;
                 // Refresh displayed flags without turning an explicit unread
                 // command back into a read through reader-selection side effects.
                 if let Some(detail) = &self.selected {
                     self.selected = Some(self.archive()?.detail(detail.summary.id)?);
                 }
-                self.status =
-                    format!("Updated {count} selected message(s); remote flags upload on Sync");
+                self.status = format!("Updated {count} selected message(s)");
             },
             "toggle_selection" => {
                 let id = MessageId(
@@ -666,10 +652,11 @@ impl Mail {
                 } else {
                     self.archive_mut()?.queue_moves(&ids, source, target)?
                 };
+                self.flush_messages(&ids)?;
                 self.checked.clear();
                 self.refresh()?;
                 self.status = format!(
-                    "{count} message(s): local {} applied; remote operations queued for next Sync",
+                    "{count} message(s): local {} applied; remote operations queued",
                     if copying { "copies" } else { "moves" }
                 );
             },
@@ -900,6 +887,7 @@ impl Mail {
                         .get("mark_read")
                         .and_then(Data::as_bool)
                         .unwrap_or(true),
+                    sync_paused: self.preferences.sync_paused,
                     sync_minutes: if text("sync_minutes").is_empty() {
                         self.preferences.sync_minutes
                     } else {
@@ -921,12 +909,12 @@ impl Mail {
                 settings.validate()?;
                 settings.apply_fonts(&self.font_config)?;
                 settings.save(&self.root)?;
-                self.sync_schedule
-                    .configure(settings.sync_minutes, std::time::Instant::now());
+
                 self.query.threaded = settings.threaded;
                 self.query.before = None;
                 self.expanded.clear();
                 self.preferences = settings;
+                self.configure_workers()?;
                 // Re-render without treating a preference change as reading mail.
                 if let Some(id) = self.selected.as_ref().map(|detail| detail.summary.id) {
                     let mark_read = self.preferences.mark_read;
@@ -964,6 +952,7 @@ impl Mail {
                         if action == "star" { "flagged" } else { "seen" },
                         value,
                     )?;
+                    self.flush_messages(&[id])?;
                     self.selected = Some(self.archive()?.detail(id)?);
                     self.refresh()?;
                 }
@@ -1038,14 +1027,14 @@ impl Mail {
                 self.launch(move |root, _| Ok(moonmail_network::send_queued(&root, id)?))?;
             },
             "sync" => {
-                self.start_sync(true)?;
+                self.start_sync()?;
+                self.status = "Sync requested".into();
             },
             "cancel_sync" => {
-                self.sync_schedule.pause();
-                if let Some(cancel) = &self.sync_cancel {
-                    cancel.store(true, Ordering::Relaxed);
-                    self.status = "Stopping Sync after the current command…".into();
-                }
+                self.workers.pause();
+                self.preferences.sync_paused = true;
+                self.preferences.save(&self.root)?;
+                self.status = "Automatic sync paused".into();
             },
             "login" | "account_password" | "account_check" | "oauth_client_import" => {
                 self.handle_account(&action, &message)?
@@ -1078,27 +1067,6 @@ impl Mail {
             },
             _ => {},
         }
-        if matches!(
-            action.as_str(),
-            "folder_create"
-                | "folder_delete"
-                | "folder_rename"
-                | "thread_read"
-                | "thread_unread"
-                | "selection_flag"
-                | "star"
-                | "unread"
-                | "keyword_set"
-                | "keyword_retry"
-                | "choose_copy"
-                | "copy_messages"
-                | "archive_messages"
-                | "trash_messages"
-                | "choose_move"
-                | "move_messages"
-        ) {
-            self.check_jmap_edits = true;
-        }
         Ok(())
     }
 }
@@ -1107,12 +1075,15 @@ impl Mail {
     fn initialize(&mut self) -> Result<()> {
         let archive = Archive::open(&self.root)?;
         self.preferences = crate::fonts::Preferences::load(&self.root)?;
-        self.sync_schedule
-            .configure(self.preferences.sync_minutes, std::time::Instant::now());
+
         self.query.threaded = self.preferences.threaded;
         self.index = Some(crate::local::open_index(&self.root, &archive)?);
         self.draft = archive.latest_draft()?;
         self.archive = Some(archive);
+        if self.preferences.sync_paused {
+            self.workers.pause();
+        }
+        self.configure_workers()?;
         self.reader_dir = Some(
             tempfile::Builder::new()
                 .prefix("reader-")
@@ -1177,7 +1148,6 @@ impl Native for Mail {
                         if !done {
                             self.error =
                                 "Network worker stopped unexpectedly; use Sync to retry".into();
-                            self.sync_schedule.pause();
                             changed = true;
                             done = true;
                         }
@@ -1187,24 +1157,10 @@ impl Native for Mail {
                 changed = true;
                 match event {
                     Event::Progress(status) => self.status = status,
-                    Event::Done(result, retryable) => {
+                    Event::Done(result) => {
                         done = true;
-                        if self.sync_cancel.is_some() {
-                            self.sync_schedule.finished(
-                                result.is_ok(),
-                                retryable,
-                                std::time::Instant::now(),
-                            );
-                        }
                         match result {
-                            Ok(()) => {
-                                self.status = if self.sync_cancel.is_some() {
-                                    "Up to date"
-                                } else {
-                                    "Operation completed"
-                                }
-                                .into()
-                            },
+                            Ok(()) => self.status = "Operation completed".into(),
                             Err(error) => {
                                 tracing::warn!(%error, "operation stopped");
                                 self.status = "Operation stopped".into();
@@ -1217,22 +1173,14 @@ impl Native for Mail {
         }
         if done {
             self.job = None;
-            self.sync_cancel = None;
-        }
-        if self.job.is_none() && std::mem::take(&mut self.check_jmap_edits) && !self.demo {
-            match self.start_jmap_edits() {
-                Ok(started) => changed |= started,
-                Err(error) => {
-                    self.error = format!("{error:#}");
-                    changed = true;
-                },
+            if let Err(error) = self.configure_workers() {
+                self.error = format!("{error:#}");
             }
         }
-        match self.maybe_auto_sync(std::time::Instant::now()) {
+        match self.poll_workers() {
             Ok(started) => changed |= started,
             Err(error) => {
                 self.error = format!("{error:#}");
-                self.sync_schedule.pause();
                 changed = true;
             },
         }

@@ -688,3 +688,94 @@ fn condstore_delta_recovers_after_cancellation_and_reconciles_expunge() -> Resul
     assert_eq!(archive.total()?, 4);
     Ok(())
 }
+
+#[test]
+fn live_workers_push_flush_and_pause_independently() -> Result {
+    use {
+        moonmail_network::{LiveAccount, LiveStatus},
+        std::{
+            sync::atomic::{AtomicUsize, Ordering},
+            time::{Duration, Instant},
+        },
+    };
+
+    fn until(mut observed: impl FnMut() -> bool) -> Result {
+        let end = Instant::now() + Duration::from_secs(5);
+        while !observed() {
+            if Instant::now() >= end {
+                return Err("live worker missed fixture deadline".into());
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        Ok(())
+    }
+
+    let fixture = Fixture::new(false, false)?;
+    let server = fixture._server.as_ref().ok_or("expected native fixture")?;
+    let healthy = fixture.peer(0, TlsMode::Implicit)?;
+    let failing = fixture.peer(1, TlsMode::Implicit)?;
+    let root = healthy.root.path();
+    let mut archive = Archive::open(root)?;
+    let tls = fixture.imap.clone();
+    let (release_login, gate) = std::sync::mpsc::channel();
+    let bad = LiveAccount::start_with(root.into(), failing.account, 15, move |a| {
+        gate.recv_timeout(Duration::from_secs(10))
+            .map_err(|_| moonmail_network::Error::Invalid("Fixture login gate expired"))?;
+        let mut credentials = secret();
+        credentials.value = "wrong synthetic password".into();
+        RustImap::connect_with_tls(a, &credentials, &tls)
+    })?;
+    let tls = fixture.imap.clone();
+    let connections = Arc::new(AtomicUsize::new(0));
+    let count = connections.clone();
+    let live = LiveAccount::start_with(root.into(), healthy.account.clone(), 15, move |a| {
+        count.fetch_add(1, Ordering::Relaxed);
+        RustImap::connect_with_tls(a, &secret(), &tls)
+    })?;
+    // The healthy account reaches IDLE while its peer is still connecting.
+    until(|| server.idle_counts() == (1, 0))?;
+    release_login.send(())?;
+    until(|| {
+        bad.events()
+            .any(|event| matches!(event, LiveStatus::Error { retry: None, .. }))
+    })?;
+    let raw = b"Subject: push\r\nMessage-ID: <push@moonmail.test>\r\nFrom: sender@moonmail.test\r\nTo: bob@moonmail.test\r\n\r\nfixture body\r\n";
+    let mut probe = fixture.incoming(&healthy)?;
+    probe.append_sent("INBOX", raw)?;
+    until(|| server.idle_counts() == (2, 1))?;
+    let id = healthy.observe(raw, MailboxRole::Inbox)?;
+    archive.set_flag(id, "flagged", true)?;
+    live.flush();
+    until(|| server.idle_counts() == (3, 2))?;
+    assert!(probe.snapshot("INBOX")?.messages.iter().any(|m| m.starred));
+    let uid = probe
+        .snapshot("INBOX")?
+        .messages
+        .first()
+        .ok_or("missing remote message")?
+        .uid;
+    probe.flag(uid, "flagged", false)?;
+    until(|| server.idle_counts() == (4, 3))?;
+    assert!(!archive.detail(id)?.summary.starred);
+    archive.queue_moves(
+        &[id],
+        None,
+        moonmail_store::MoveTarget::Role(MailboxRole::Archive),
+    )?;
+    live.flush();
+    until(|| server.idle_counts() == (5, 4))?;
+    assert!(probe.snapshot("INBOX")?.messages.is_empty());
+    healthy.observe(raw, MailboxRole::Archive)?;
+    assert_eq!(connections.load(Ordering::Relaxed), 1);
+    live.pause();
+    until(|| server.idle_counts() == (5, 5))?;
+    until(|| live.events().any(|s| matches!(s, LiveStatus::Paused)))?;
+    live.flush();
+    std::thread::sleep(Duration::from_millis(350));
+    assert_eq!(server.idle_counts(), (5, 5));
+    live.sync();
+    until(|| server.idle_counts() == (6, 5))?;
+    drop(live);
+    until(|| server.idle_counts() == (6, 6))?;
+    Ok(())
+}

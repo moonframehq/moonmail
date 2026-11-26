@@ -10,6 +10,7 @@ mod folder_operations;
 mod folders;
 mod forwarding;
 mod identities;
+mod idle;
 mod imap_copy;
 mod imap_folders;
 mod imap_gmail;
@@ -18,10 +19,12 @@ mod imap_keywords;
 mod imap_tls;
 mod incoming;
 pub mod jmap;
+mod jmap_push;
 mod jmap_submission;
 mod jmap_sync;
 mod jmap_writes;
 mod keywords;
+mod live;
 mod moves;
 mod recipients;
 mod remote_drafts;
@@ -44,6 +47,7 @@ pub use {
         KeywordOutcome, MoveOutcome, RemoteFolder, RemoteMessage, RemoteSnapshot, RemoteUid,
         RustImap, ScanError, ScanOutcome,
     },
+    live::{LiveAccount, LiveStatus},
     secrecy::{ExposeSecret, SecretString},
     sent_copy::{SentCopyError, save_sent_copy},
     submission::{
@@ -51,7 +55,6 @@ pub use {
         prepare_message, prepare_message_with_attachments,
     },
     sync::{
-        SyncError, sync_account, sync_account_cancellable, sync_jmap_edits, synchronize,
-        synchronize_cancellable,
+        SyncError, sync_account, sync_account_cancellable, synchronize, synchronize_cancellable,
     },
 };

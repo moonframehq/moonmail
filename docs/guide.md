@@ -78,7 +78,7 @@ Keyword edits and remote intent commit atomically. Complete sync inventories pub
 server membership while preserving pending local edits; failed scans cannot clear
 tags. Keyword STORE validates UIDVALIDITY, UID and explicit PERMANENTFLAGS support.
 Lost acknowledgments retry idempotent add/remove on the next Sync. Unsupported or
-stale operations remain visible, with paged **Retry on Sync** / **Discard intent**
+stale operations remain visible, with paged **Retry** / **Discard intent**
 controls; discarding restores observed state on the next complete Sync. Absent or
 empty PERMANENTFLAGS are conservatively unsupported because the pinned adapter
 does not distinguish them. Incoming observations and local additions are bounded
@@ -105,14 +105,14 @@ occurrence of each matching message, just like manual keyword edits. Pending
 transfers or keyword limits produce blocked history entries; resolve the cause and
 apply explicitly. Storage failures roll back entry and action together. History
 pages 100 matching runs at a time and retains old names/revisions after rule deletion.
-Newly downloaded rule intent uploads on the following Sync.
+When ingest queues a rule edit, the account worker runs another write pass.
 
 Server SPECIAL-USE roles drive shortcuts and Archive/Trash destinations, including
 localized folder names. **Move & folders** lets you assign Archive/Trash overrides
 or restore server defaults. Missing/ambiguous roles require an explicit choice;
 a missing overridden folder never silently redirects to a different destination.
 
-Remote moves persist locally and run on the next **Sync**, up to 100 per run.
+Remote moves persist locally and wake the account worker, which drains queued transfers in batches of up to 100.
 Queued messages remain in the source view until the server acknowledges the move;
 destination messages are refreshed by the same sync. **Mail operations** shows
 queued, running, done, failed, and uncertain outcomes, with cancellation before
@@ -379,10 +379,10 @@ retry after the other operation completes. Lock files live in
 `~/Library/Application Support/moonmail/credential-locks/`, independently of
 `MOONMAIL_DATA_DIR`, and remain in place after release.
 
-Authentication and synchronization run on a separate connection-owning thread;
-local navigation stays available. Sync defaults to manual; Settings offers periodic
-sync and transport-error reconnect. Read/star changes
-are durable locally and uploaded on the next sync.
+Each connected account has a worker that owns its authenticated IMAP session.
+INBOX changes wake the worker through IDLE. Full folder checks run every 15 minutes
+by default and provide polling for servers without IDLE. Local flag, keyword,
+transfer and folder edits wake the owning worker after the local commit.
 
 Compose opens an independent window so you can keep reading other mail. One
 reusable composer is supported; opening another draft replaces its saved contents.
@@ -437,8 +437,7 @@ accounts and their configured aliases, with checkmarks, arrow/Enter navigation,
 Escape dismissal, and **Manage accounts…**. Selecting a row saves the sending
 account and alias together; its account supplies the credentials and SMTP settings.
 To/Cc/Bcc, edited body/signature text, attachments, and reply ancestry are preserved.
-Sync visits accounts in registration order and stops on the first failure, retaining
-completed durable work. Disconnecting keeps local mail, drafts, and frozen outbox
+Accounts sync independently and report their own connection errors. Disconnecting keeps local mail, drafts, and frozen outbox
 entries. Sending requires their original account to be reconnected; drafts can
 instead choose a different From account. Legacy blank-account drafts require an
 explicit From selection. No default-account substitution occurs for outbox items.
@@ -589,11 +588,13 @@ live views; original bytes remain in the archive.
   Body downloads batch up to 32 UIDs and 8 MiB of reported sizes. Larger messages
   up to 64 MiB download individually. A missing body or interrupted download keeps
   the mailbox eligible for a full retry. Completed downloads survive cancellation.
-- **Settings → Synchronization** chooses manual (default), 1, 5, 15, or 30-minute
+- **Settings → Synchronization** chooses manual, 1, 5, 15 (default), or 30-minute
   checks while the app is open. Transport failures reconnect with 30-second
   exponential backoff capped at 15 minutes. Authentication, TLS, storage and
-  incomplete-sync errors pause automatic work until explicit Sync. Only one
-  network operation runs at a time; scheduled sync never submits queued messages.
+  incomplete-sync errors pause the affected account until explicit Sync. Manual
+  mode preserves existing manual preferences and disables IDLE and periodic reads.
+  Edits still wake the worker to upload and reconcile. Stop Sync pauses those
+  uploads too and stays paused across restarts until you choose Sync. Scheduled sync never submits queued messages.
 - Remote message moves use native `MOVE` or the verified UIDPLUS fallback described
   above. Move preflight probes only the target UID, checks UIDVALIDITY,
   and rejects stale identities. The operation history shows at most 100 records
