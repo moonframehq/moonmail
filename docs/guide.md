@@ -571,8 +571,9 @@ the same mailbox over IMAP or JMAP, downloads keeps its own copy. The import res
 to mirror from the command line instead.
 
 Under **Sources**, click an account's name to see only that account's mail, so a mailbox synced both directly and through msgvault does not show twice. The role groups under **Mailboxes** (Inbox, Archive, Sent, Junk, Trash) list each account separately, and **All Messages**, Unread, Flagged and search show every account together.
-A message that a msgvault account and another account both hold, matched by
-Message-ID, appears there once, from the other account.
+A message that a msgvault account and another account both hold appears there
+once, from the other account. Copies match on Message-ID, sender, subject and
+body text, so a different message that reuses a Message-ID hides nothing.
 
 msgvault labels and IMAP folders become mailboxes, and a message without one
 appears in **All Mail**. After each msgvault sync, Moonmail follows its folder

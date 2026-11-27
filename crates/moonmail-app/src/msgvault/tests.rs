@@ -456,3 +456,35 @@ fn views_across_accounts_show_a_mirrored_message_once() -> Result<()> {
     assert_eq!(subjects(mirror)?.len(), 2);
     Ok(())
 }
+
+#[test]
+fn a_different_message_reusing_a_message_id_hides_nothing() -> Result<()> {
+    use moonmail_core::{MailQuery, MailRepository};
+    let vault = Vault::new()?;
+    vault.add(1, "Real invoice", false, &[1])?;
+    detect(vault.store.path(), &vault.path())?;
+    vault.sync()?;
+    let mut archive = Archive::open(vault.store.path())?;
+    let blobs = FileBlobs::new(vault.store.path());
+    let inbox = archive.mailbox("ada@example.test", "INBOX")?;
+    let forged =
+        b"From: Bob <bob@example.test>\r\nTo: ada@example.test\r\nSubject: Real invoice\r\n\
+Message-ID: <1@example.test>\r\n\r\nPay to a different account";
+    archive.ingest(
+        &StalwartParser::default(),
+        &blobs,
+        IncomingMessage {
+            account: "ada@example.test",
+            mailbox: inbox,
+            origin: "imap",
+            epoch: 0,
+            uid: None,
+            seen: false,
+            starred: false,
+            received_at: 0,
+            raw: forged,
+        },
+    )?;
+    assert_eq!(archive.page(&MailQuery::default(), 50)?.rows.len(), 2);
+    Ok(())
+}
