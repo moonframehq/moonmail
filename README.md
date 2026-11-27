@@ -96,7 +96,7 @@ just ci
 - **Live Maildir** shares a local mail tree with Mutt and mbsync. Connect it from the Mail menu to follow deliveries, moves, expunges and flag changes. [Shared Maildir setup](docs/guide.md#share-a-live-maildir-with-mutt-and-mbsync).
 - **Local import** supports nested Maildir and Maildir++ folders, mboxrd and length-framed mbox, and individual or grouped EML files from the Mail menu and CLI.
 - **Reading**: threads, Correspondence, and sanitized HTML with remote images
-  blocked.
+  blocked by default. Load images for one message or enable automatic loading in Reading & Lists.
 - **Search**: fields, Boolean operators, saved searches and partitions, on a
   local index.
 - **Writing**: separate composer windows, identities, signatures, attachments

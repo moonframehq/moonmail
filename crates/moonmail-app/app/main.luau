@@ -56,6 +56,16 @@ local function table_header(related, state, mail)
 	}
 end
 
+local function first_sync_prompt(mail)
+	if not mail.account or #(mail.mailboxes or {}) > 0 then return nil end
+	local paused = (mail.preferences or {}).sync_paused
+	if not paused and mail.sync_schedule ~= "Manual" then return nil end
+	return ui.column { grow = true, padding = "large", justify = "center", align = "center",
+		ui.text { if paused then "Sync is paused" else "Ready for your first sync", tone = "muted" },
+		action(if paused then "Resume sync" else "Sync now", "sync"),
+	}
+end
+
 local function rows(messages, selected_id, related, key, threaded, layout)
 	local items = messages or {}
 	if #items == 0 then
@@ -352,7 +362,7 @@ return mod {
 			{ label = "Toggle Sidebar", msg = "toggle-sidebar", shortcut = "secondary-alt-s" },
 		} },
 	},
-	init = function(previous) return { query = "", email = "", pane = "mail", rich = false, thread = false, focus = false, sidebar_hidden = false, closed = if previous then previous.closed or {} else {}, related_sort = "date", related_ascending = false } end,
+	init = function(previous) return { query = "", email = "", pane = "mail", rich = true, thread = false, focus = false, sidebar_hidden = false, closed = if previous then previous.closed or {} else {}, related_sort = "date", related_ascending = false } end,
 	update = function(state, msg)
 		if msg == "compose" or msg == "reply" or msg == "reply_all" or msg == "forward" or msg == "forward_text" then
 			return state, { { to = "provider:mail", msg = { action = msg } } }
@@ -431,7 +441,7 @@ return mod {
 					state.query = msg.source or ""; state.search_name = msg.name or ""; state.search_sources = table.clone(msg.sources or {})
 				end
 				if msg.action == "outbox_sent" then state.pane = "mail" end
-				if msg.action == "reader_images" then state.rich = true end
+				if msg.action == "reader_images" or msg.action == "reader_remote_images" then state.rich = true end
 				if msg.action == "attachments" then state.pane = "attachments" end
 				if msg.action == "draft_discard" then state.pane = "drafts" end
 				if msg.action == "folder" then state.query = "" end
@@ -713,12 +723,20 @@ return mod {
 				},
 				ui.row { class = "reader-notice", height = 27, shrink = false, align = "center",
 					ui.icon { name = "shield", size = "small" },
-					ui.text { if selected.html and state.rich then "HTML · External resources blocked" else "Plain text", size = "small" },
-					ui.spacer {}, ui.button { label = "Save .eml…", small = true, variant = "ghost", msg = { save_message = selected.summary.id } }, ui.button { label = "Links…", small = true, variant = "ghost", msg = "links" }, ui.button { label = "Attachments…", small = true, variant = "ghost", msg = { action = "attachments", message = selected.summary.id } }, ui.button { label = "Embedded images", small = true, variant = "ghost", msg = { action = "reader_images", message = selected.summary.id }, disabled = not selected.html }, ui.button { label = if state.rich then "Plain text" else "HTML", small = true, variant = "ghost", msg = "rich", disabled = not selected.html },
+					ui.text { if selected.html and state.rich then "HTML" else "Plain text", size = "small" },
+					ui.spacer {}, ui.button { label = "Save .eml…", small = true, variant = "ghost", msg = { save_message = selected.summary.id } }, ui.button { label = "Links…", small = true, variant = "ghost", msg = "links" }, ui.button { label = "Attachments…", small = true, variant = "ghost", msg = { action = "attachments", message = selected.summary.id } }, ui.button { label = "Embedded images", small = true, variant = "ghost", msg = { action = "reader_images", message = selected.summary.id }, disabled = not selected.html }, ui.button { label = if state.rich and selected.html then "Plain text" else "HTML", small = true, variant = "ghost", msg = "rich", disabled = not selected.html },
 				},
+				if state.rich and selected.html and mail.remote_images and mail.remote_images.present then
+					ui.row { class = "reader-notice", height = 30, shrink = false, align = "center",
+						ui.text { mail.remote_images.status, size = "small" }, ui.spacer {},
+						if mail.remote_images.can_load then ui.button { label = "Load images", small = true,
+							msg = { action = "reader_remote_images", message = selected.summary.id } } else nil,
+					} else nil,
 				if mail.reader_images and mail.reader_images ~= "" then ui.text { mail.reader_images, size = "small", tone = "muted" } else nil,
 				if #(mail.thread_warnings or {}) > 0 then ui.text { table.concat(mail.thread_warnings, "\n"), size = "small", tone = "muted" } else nil,
-				ui.column { grow = true, ui.browser { id = "message-reader", url = if state.rich and mail.html_url ~= "" then mail.html_url else mail.plain_url } },
+				ui.column { grow = true, if mail.preferences and mail.preferences.reader_renderer == "native" then
+					ui.view { name = "mail-reader", id = "message-reader-native", props = { revision = mail.reader_revision, rich = state.rich and selected.html } }
+				else ui.browser { id = "message-reader", url = if state.rich and mail.html_url ~= "" then mail.html_url else mail.plain_url } },
 			} else ui.column { class = "form", ui.text { "No message selected", tone = "muted" } }
 		end
 		local no_action = not selected or mail.selected_moving
@@ -726,7 +744,7 @@ return mod {
 		local count_summary = tostring(mail.page_count or 0) .. (if mail.threaded then " threads" else " messages") .. (if total_unread > 0 then " · " .. tostring(total_unread) .. " unread" else "")
 		local message_list_pane = ui.column { grow = true, gap = "none",
 			table_header(false, state, mail),
-			rows(mail.rows, mail.anchor, false, mail.list_key or "initial", mail.threaded, columns(mail, false)),
+			first_sync_prompt(mail) or rows(mail.rows, mail.anchor, false, mail.list_key or "initial", mail.threaded, columns(mail, false)),
 			ui.row { height = 26, class = "mail-table-footer", shrink = false, align = "center",
 				ui.text { tostring(mail.page_count or 0) .. (if mail.threaded then " threads" else " messages") .. " shown", class = "muted" },
 				ui.spacer {}, action("First", "first"),
@@ -745,7 +763,7 @@ return mod {
 			ui.row { height = 26, shrink = false, action("First", "related_first", { anchor = mail.anchor }), ui.button { label = "Next", small = true, disabled = not mail.related or not mail.related.next, msg = { action = "related_next", anchor = mail.anchor }, to = "provider:mail" } },
 		}
 		local mail_app_list_pane = ui.column { grow = true, gap = "none",
-			mail_app_rows(mail.rows, mail.anchor, mail.list_key or "initial", mail.threaded),
+			first_sync_prompt(mail) or mail_app_rows(mail.rows, mail.anchor, mail.list_key or "initial", mail.threaded),
 			ui.row { height = 26, class = "mail-table-footer", shrink = false, align = "center",
 				ui.text { tostring(mail.page_count or 0) .. (if mail.threaded then " threads" else " messages") .. " shown", class = "muted" },
 				ui.spacer {}, action("First", "first"),

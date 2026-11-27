@@ -45,6 +45,9 @@ mod outbox;
 mod partitions;
 #[path = "provider_reader.rs"]
 mod reader;
+#[cfg(all(feature = "capture", target_os = "macos"))]
+#[path = "provider_reader_bench.rs"]
+pub(crate) mod reader_bench;
 #[path = "provider_relationships.rs"]
 mod relationships;
 #[path = "provider_rules.rs"]
@@ -114,10 +117,12 @@ pub struct Mail {
     plain_url: String,
     reader_links: crate::reader_resources::ReaderLinks,
     reader_images: String,
+    image_state: reader::ImageState,
     reader_dir: Option<tempfile::TempDir>,
     preferences: crate::fonts::Preferences,
     font_config: PathBuf,
     reader_revision: u64,
+    documents: crate::reader_backend::DocumentSlot,
     font_families: Vec<String>,
     font_preview_url: String,
     font_preview_revision: u64,
@@ -175,10 +180,12 @@ impl Mail {
             plain_url: String::new(),
             reader_links: crate::reader_resources::ReaderLinks::default(),
             reader_images: String::new(),
+            image_state: Default::default(),
             reader_dir: None,
             preferences: crate::fonts::Preferences::default(),
             font_config: crate::fonts::path(demo),
             reader_revision: 0,
+            documents: Default::default(),
             font_families: Vec::new(),
             font_preview_url: String::new(),
             font_preview_revision: 0,
@@ -258,51 +265,23 @@ impl Mail {
     }
 
     fn select(&mut self, id: MessageId, anchor: bool) -> Result<()> {
-        self.reader_revision = self.reader_revision.wrapping_add(1);
         if self.preferences.mark_read && !self.archive()?.has_pending_move(id)? {
             self.archive_mut()?.set_flag(id, "seen", true)?;
             self.flush_messages(&[id])?;
         }
         let detail = self.archive()?.detail(id)?;
         let links = crate::reader_resources::links(&detail.text, detail.html.as_deref())?;
-        let dir = self
-            .reader_dir
+        if self
+            .selected
             .as_ref()
-            .context("Reader directory is missing")?;
-        let path = dir.path().join(format!("plain-{}.html", id.0 % 2));
-        std::fs::write(
-            &path,
-            crate::page::plain_with_font(&detail.text, &self.preferences.reader),
-        )?;
-        self.plain_url = url::Url::from_file_path(path)
-            .map_err(|_| anyhow::anyhow!("Invalid reader path"))?
-            .to_string();
-        self.plain_url.push_str(&format!(
-            "?message={}&revision={}",
-            id.0, self.reader_revision
-        ));
-        self.html_url.clear();
-        if let Some(html) = &detail.html {
-            let dir = self
-                .reader_dir
-                .as_ref()
-                .context("Reader directory is missing")?;
-            // Two rotating files keep disk use bounded while changing the URL.
-            let path = dir.path().join(format!("message-{}.html", id.0 % 2));
-            std::fs::write(
-                &path,
-                crate::page::html_with_font(html, &self.preferences.reader),
-            )?;
-            self.html_url = url::Url::from_file_path(path)
-                .map_err(|_| anyhow::anyhow!("Invalid reader path"))?
-                .to_string();
-            self.html_url.push_str(&format!(
-                "?message={}&revision={}",
-                id.0, self.reader_revision
-            ));
+            .is_none_or(|current| current.summary.id != id)
+        {
+            self.image_state.reset();
         }
+        self.prepare_reader(&detail)?;
         self.selected = Some(detail);
         self.reader_links = links;
+        self.auto_load_images();
         self.reader_images.clear();
         self.attachments.clear();
         self.attachment_message = None;
@@ -401,7 +380,11 @@ impl Mail {
         let move_selection = self.move_selection();
         snapshot["move_account"] = json!(self.move_account(&move_selection)?);
         snapshot["move_selection"] = json!(move_selection);
+        snapshot["reader_revision"] = json!(self.reader_revision);
         snapshot["reader_links"] = json!(self.reader_links);
+        snapshot["remote_images"] = self
+            .image_state
+            .notice(&self.reader_links.image_urls, self.demo);
         snapshot["reader_images"] = json!(self.reader_images);
         snapshot["thread_warnings"] = json!(
             self.selected
@@ -893,6 +876,15 @@ impl Mail {
                             .parse()
                             .context("Enter a reader font size between 8 and 32")?,
                     },
+                    reader_renderer: match text("reader_renderer").as_str() {
+                        "" => self.preferences.reader_renderer,
+                        name => serde_json::from_value(json!(name))
+                            .context("Unknown reader renderer")?,
+                    },
+                    load_remote_images: message
+                        .get("load_remote_images")
+                        .and_then(Data::as_bool)
+                        .unwrap_or(self.preferences.load_remote_images),
                     threaded: message
                         .get("threaded")
                         .and_then(Data::as_bool)
@@ -924,6 +916,9 @@ impl Mail {
                 settings.apply_fonts(&self.font_config)?;
                 settings.save(&self.root)?;
 
+                if self.preferences.load_remote_images && !settings.load_remote_images {
+                    self.image_state.clear_remote();
+                }
                 self.query.threaded = settings.threaded;
                 self.query.before = None;
                 self.expanded.clear();
@@ -977,7 +972,9 @@ impl Mail {
             },
             "attachments" | "attachment_save" | "message_save" | "messages_save"
             | "draft_attach" | "draft_detach" => self.handle_attachment(&action, &message)?,
-            "reader_link" | "reader_images" => self.handle_reader(&action, &message)?,
+            "reader_link" | "reader_images" | "reader_remote_images" => {
+                self.handle_reader(&action, &message)?
+            },
             "related_first" | "related_next" | "related_sort" | "related_mode" => {
                 self.handle_relationship(&action, &message)?
             },
@@ -1149,7 +1146,13 @@ impl Native for Mail {
         }
     }
     fn tick(&mut self, host: &Handle) {
-        let mut changed = false;
+        let mut changed = match self.poll_images() {
+            Ok(changed) => changed,
+            Err(error) => {
+                self.error = format!("{error:#}");
+                true
+            },
+        };
         let mut done = false;
         if let Some(receiver) = &self.discovery_job {
             match receiver.try_recv() {
@@ -1241,10 +1244,12 @@ impl Native for Mail {
                     }
                     self.checked.remove(&selected.summary.id);
                     self.selected = None;
+                    self.image_state.reset();
                     self.attachments.clear();
                     self.attachment_message = None;
                     self.reader_links = Default::default();
                     self.reader_images.clear();
+                    self.documents.replace(Default::default());
                     self.html_url.clear();
                     self.plain_url.clear();
                 },
