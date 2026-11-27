@@ -114,9 +114,41 @@ fn role(name: &str, system: Option<&str>) -> Option<MailboxRole> {
     })
 }
 
+/// Names an original without writing it: msgvault already stores it.
+struct Referenced;
+
+impl moonmail_core::BlobStore for Referenced {
+    type Error = moonmail_store::BlobError;
+
+    fn put(&self, bytes: &[u8]) -> Result<String, Self::Error> {
+        Ok(moonmail_store::content_digest(bytes))
+    }
+
+    fn get(&self, _hash: &str) -> Result<Vec<u8>, Self::Error> {
+        Err(moonmail_store::BlobError::ExternalMissing)
+    }
+}
+
+/// Delete Moonmail's copies of originals msgvault keeps, after checking
+/// msgvault returns the same bytes. Copies another account uses stay.
+pub fn release(archive: &Archive, blobs: &FileBlobs) -> Result<usize> {
+    let (mut after, mut released) = (String::new(), 0);
+    loop {
+        let hashes = archive.releasable_blobs(&after, 1000)?;
+        let Some(last) = hashes.last() else {
+            return Ok(released);
+        };
+        after = last.clone();
+        for hash in &hashes {
+            if blobs.release(hash)? {
+                released += 1;
+            }
+        }
+    }
+}
+
 struct Mirror<'a> {
     archive: &'a mut Archive,
-    blobs: &'a FileBlobs,
     vault: &'a Connection,
     account: &'a MsgvaultAccount,
     roles: HashMap<String, Option<String>>,
@@ -126,7 +158,6 @@ struct Mirror<'a> {
 impl Mirror<'_> {
     fn new<'a>(
         archive: &'a mut Archive,
-        blobs: &'a FileBlobs,
         vault: &'a Connection,
         account: &'a MsgvaultAccount,
     ) -> Result<Mirror<'a>> {
@@ -136,7 +167,6 @@ impl Mirror<'_> {
             .collect::<rusqlite::Result<_>>()?;
         Ok(Mirror {
             archive,
-            blobs,
             vault,
             account,
             roles,
@@ -263,9 +293,15 @@ impl Mirror<'_> {
             let labels = self.labels(id)?;
             let mailboxes = self.mailboxes(&labels)?;
             let origin = format!("msgvault:{id}");
+            // msgvault keeps the original; Moonmail records where, not a copy.
+            self.archive.reference_external(
+                &moonmail_store::content_digest(&raw),
+                &self.account.database,
+                id,
+            )?;
             let message = match self.archive.ingest(
                 &parser,
-                self.blobs,
+                &Referenced,
                 IncomingMessage {
                     account: &self.account.account,
                     mailbox: mailboxes[0],
@@ -422,7 +458,7 @@ pub fn sync(
     let mut errors = Vec::new();
     for account in archive.msgvault_accounts()? {
         let result = open(Path::new(&account.database)).and_then(|vault| {
-            let mut mirror = Mirror::new(archive, &blobs, &vault, &account)?;
+            let mut mirror = Mirror::new(archive, &vault, &account)?;
             let fresh = mirror.reconcile()?;
             let arrived = mirror.ingest(&mut |count| progress(&account.account, count))?;
             Ok(fresh + arrived)
@@ -431,6 +467,10 @@ pub fn sync(
             Ok(count) => changed += count,
             Err(error) => errors.push(format!("{}: {error:#}", account.account)),
         }
+    }
+    let released = release(archive, &blobs)?;
+    if released > 0 {
+        tracing::info!(released, "released copies msgvault keeps");
     }
     anyhow::ensure!(errors.is_empty(), "{}", errors.join("\n"));
     Ok(changed)

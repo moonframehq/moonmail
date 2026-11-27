@@ -16,12 +16,18 @@ pub enum BlobError {
     InvalidHash,
     #[error("blob failed its SHA-256 integrity check")]
     Integrity,
+    #[error("could not read the original from msgvault")]
+    External(#[from] rusqlite::Error),
+    #[error("msgvault no longer holds this original")]
+    ExternalMissing,
 }
 
 #[derive(Clone)]
 pub struct FileBlobs {
     root: PathBuf,
     extension: &'static str,
+    /// The archive root, for message originals kept by msgvault instead.
+    external: Option<PathBuf>,
 }
 
 impl FileBlobs {
@@ -29,6 +35,7 @@ impl FileBlobs {
         Self {
             root: root.as_ref().join("messages"),
             extension: "eml",
+            external: Some(root.as_ref().to_owned()),
         }
     }
 
@@ -37,6 +44,7 @@ impl FileBlobs {
         Self {
             root: root.as_ref().join("attachments"),
             extension: "bin",
+            external: None,
         }
     }
 
@@ -44,6 +52,7 @@ impl FileBlobs {
         Self {
             root: self.root.with_file_name("attachments"),
             extension: "bin",
+            external: None,
         }
     }
 
@@ -92,11 +101,39 @@ impl BlobStore for FileBlobs {
     }
 
     fn get(&self, hash: &str) -> Result<Vec<u8>, BlobError> {
-        let bytes = fs::read(self.path(hash)?)?;
+        let bytes = match fs::read(self.path(hash)?) {
+            Ok(bytes) => bytes,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => match &self.external {
+                Some(root) => crate::external_blobs::read(root, hash)?.ok_or(error)?,
+                None => return Err(error.into()),
+            },
+            Err(error) => return Err(error.into()),
+        };
         if content_digest(&bytes) != hash {
             return Err(BlobError::Integrity);
         }
         Ok(bytes)
+    }
+}
+
+impl FileBlobs {
+    /// Delete this file once msgvault returns the same bytes for `hash`.
+    /// Returns whether a file was released.
+    pub fn release(&self, hash: &str) -> Result<bool, BlobError> {
+        let path = self.path(hash)?;
+        let Some(root) = &self.external else {
+            return Ok(false);
+        };
+        if !path.exists() {
+            return Ok(false);
+        }
+        match crate::external_blobs::read(root, hash)? {
+            Some(bytes) if content_digest(&bytes) == hash => {
+                fs::remove_file(&path)?;
+                Ok(true)
+            },
+            _ => Ok(false),
+        }
     }
 }
 

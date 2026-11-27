@@ -13,6 +13,13 @@ pub(crate) const SUMMARY: &str =
     EXISTS(SELECT 1 FROM occurrences o WHERE o.message_id=m.id AND seen=0),
     EXISTS(SELECT 1 FROM occurrences o WHERE o.message_id=m.id AND flagged=1),1 FROM messages m";
 const LIVE: &str = "EXISTS(SELECT 1 FROM occurrences o WHERE o.message_id=m.id)";
+/// In views across accounts, show a message once: drop a msgvault mirror's
+/// copy when another account holds a live message with the same Message-ID.
+const HIDE_MIRRORED: &str = "NOT (m.rfc_id IS NOT NULL
+    AND m.account IN (SELECT account FROM msgvault_accounts)
+    AND EXISTS(SELECT 1 FROM messages d WHERE d.rfc_id=m.rfc_id
+        AND d.account NOT IN (SELECT account FROM msgvault_accounts)
+        AND EXISTS(SELECT 1 FROM occurrences o WHERE o.message_id=d.id)))";
 
 impl Archive {
     pub fn live_summary(&self, id: MessageId) -> Result<Option<MailSummary>> {
@@ -66,6 +73,8 @@ impl MailRepository for Archive {
         if let Some(account) = &query.account {
             clauses.push("m.account=?".into());
             arguments.push(account.clone().into());
+        } else if query.mailbox.is_none() {
+            clauses.push(HIDE_MIRRORED.into());
         }
         match query.filter {
             ViewFilter::Unread => clauses.push(

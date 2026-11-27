@@ -134,6 +134,8 @@ pub enum SortField {
 pub struct MailQuery {
     pub mailbox: Option<i64>,
     /// Restrict to messages owned by one account, across all its mailboxes.
+    /// With neither a mailbox nor an account, adapters may show a message
+    /// that two accounts hold, such as a mirror and its source, only once.
     pub account: Option<String>,
     pub filter: ViewFilter,
     pub before: Option<PageCursor>,

@@ -6,6 +6,7 @@ mod demo;
 mod drafts;
 mod error;
 mod expunge;
+mod external_blobs;
 mod folder_operations;
 mod gmail;
 mod identities;
