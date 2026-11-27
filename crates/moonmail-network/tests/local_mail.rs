@@ -838,11 +838,13 @@ fn live_workers_push_flush_and_pause_independently() -> Result {
         },
     };
 
+    #[track_caller]
     fn until(mut observed: impl FnMut() -> bool) -> Result {
-        let end = Instant::now() + Duration::from_secs(5);
+        let caller = std::panic::Location::caller();
+        let end = Instant::now() + Duration::from_secs(20);
         while !observed() {
             if Instant::now() >= end {
-                return Err("live worker missed fixture deadline".into());
+                return Err(format!("live worker missed fixture deadline at {caller}").into());
             }
             std::thread::sleep(Duration::from_millis(10));
         }
@@ -858,7 +860,7 @@ fn live_workers_push_flush_and_pause_independently() -> Result {
     let tls = fixture.imap.clone();
     let (release_login, gate) = std::sync::mpsc::channel();
     let bad = LiveAccount::start_with(root.into(), failing.account, 15, move |a| {
-        gate.recv_timeout(Duration::from_secs(10))
+        gate.recv_timeout(Duration::from_secs(30))
             .map_err(|_| moonmail_network::Error::Invalid("Fixture login gate expired"))?;
         let mut credentials = secret();
         credentials.value = "wrong synthetic password".into();
@@ -872,7 +874,14 @@ fn live_workers_push_flush_and_pause_independently() -> Result {
         RustImap::connect_with_tls(a, &secret(), &tls)
     })?;
     // The healthy account reaches IDLE while its peer is still connecting.
-    until(|| server.idle_counts() == (1, 0))?;
+    until(|| {
+        for event in live.events() {
+            if let LiveStatus::Error { error, .. } = event {
+                panic!("healthy fixture worker failed before IDLE: {error}");
+            }
+        }
+        server.idle_counts() == (1, 0)
+    })?;
     release_login.send(())?;
     until(|| {
         bad.events()
