@@ -556,16 +556,23 @@ its `config.toml`. When you open Moonmail, each msgvault source that holds
 email becomes an account named **msgvault** followed by its address. Chats and
 other non-email sources are left out.
 
-A background worker copies each message's original MIME into Moonmail's
-archive, newest first, and shows its progress in the status bar. Mail that
+A background worker indexes each message into Moonmail's archive, newest
+first, and shows its progress in the status bar. The original MIME stays in
+msgvault: Moonmail stores subjects, addresses, folders and the search index,
+and reads a message's original from msgvault's database when you open, export
+or reply to it, checking its SHA-256. Copies an earlier version made are
+deleted once msgvault returns the same bytes, unless another account uses
+them. If msgvault later loses a message's original, the message stays listed
+but cannot be opened. Mail that
 arrives in msgvault meanwhile is picked up between batches of older mail. A
 large archive takes a while the first time: about 30 messages a second, so
-roughly 45 minutes for 85,000 messages. Messages whose bytes Moonmail already
-holds, such as the same account synced over IMAP or JMAP, share one copy on
-disk. The import resumes where it stopped after a quit. Run `moonmail msgvault`
+roughly 45 minutes for 85,000 messages. Mail that another account, such as
+the same mailbox over IMAP or JMAP, downloads keeps its own copy. The import resumes where it stopped after a quit. Run `moonmail msgvault`
 to mirror from the command line instead.
 
-Under **Sources**, click an account's name to see only that account's mail, so a mailbox synced both directly and through msgvault does not show twice. The role groups under **Mailboxes** (Inbox, Archive, Sent, Junk, Trash) list each account separately, and **All Messages** shows every account together, duplicates included.
+Under **Sources**, click an account's name to see only that account's mail, so a mailbox synced both directly and through msgvault does not show twice. The role groups under **Mailboxes** (Inbox, Archive, Sent, Junk, Trash) list each account separately, and **All Messages**, Unread, Flagged and search show every account together.
+A message that a msgvault account and another account both hold, matched by
+Message-ID, appears there once, from the other account.
 
 msgvault labels and IMAP folders become mailboxes, and a message without one
 appears in **All Mail**. After each msgvault sync, Moonmail follows its folder
