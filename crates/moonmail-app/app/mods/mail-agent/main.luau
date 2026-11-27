@@ -53,8 +53,15 @@ local function approval_view(ask)
 	if ask.cc and ask.cc ~= "" then table.insert(lines, ui.text { "Cc: " .. ask.cc, class = "agent-hint", truncate = true }) end
 	if ask.bcc and ask.bcc ~= "" then table.insert(lines, ui.text { "Bcc: " .. ask.bcc, class = "agent-hint", truncate = true }) end
 	table.insert(lines, ui.text { if ask.subject ~= "" then ask.subject else "(no subject)", weight = "medium", wrap = true })
-	if (ask.attachments or 0) > 0 then
-		table.insert(lines, ui.text { `{ask.attachments} attachment(s)`, class = "agent-hint" })
+	-- Every attached file, so nothing leaves unseen.
+	for _, file in ask.files or {} do
+		local size = if file.bytes >= 1048576 then string.format("%.1f MB", file.bytes / 1048576)
+			else string.format("%d KB", math.ceil(file.bytes / 1024))
+		table.insert(lines, ui.row { gap = "small", align = "center",
+			ui.icon { name = "paperclip", size = "small", tone = "warning" },
+			ui.text { file.name, weight = "medium", truncate = true },
+			ui.text { size, class = "agent-hint" },
+		})
 	end
 	table.insert(lines, ui.text { (ask.body or "") .. (if ask.truncated then "\n…" else ""), class = "agent-approval-body", wrap = true, lines = 10 })
 	table.insert(lines, ui.row { gap = "small", align = "center",

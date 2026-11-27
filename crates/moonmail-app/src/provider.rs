@@ -43,7 +43,7 @@ mod navigation_tests;
 mod outbox;
 #[path = "provider_outside.rs"]
 mod outside;
-pub(crate) use outside::SENDING;
+pub(crate) use outside::AGENT_ACTIONS;
 #[path = "provider_partitions.rs"]
 mod partitions;
 #[path = "provider_reader.rs"]

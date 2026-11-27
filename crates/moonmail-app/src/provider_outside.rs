@@ -9,9 +9,111 @@
 
 use super::*;
 
-/// UI actions that send mail or answer a send request: only the user's own
-/// click in the window performs them, never an agent's `app_action`.
-pub(crate) const SENDING: &[&str] = &["agent_request", "queue", "send", "outbox_retry"];
+/// The window's actions an agent may perform with `app_action`: moving
+/// around, selecting, editing mail and drafts, rules, tags, folders and
+/// sync. Everything else stays a real click: actions that take a path from a
+/// file picker (attach, save, import, Maildir), accounts, credentials,
+/// identities and settings, opening links or remote images, permanent
+/// deletion, and sending, retrying or answering a send request.
+pub(crate) const AGENT_ACTIONS: &[&str] = &[
+    // Moving around and selecting.
+    "account",
+    "attachments",
+    "clear_selection",
+    "columns_edit",
+    "drafts_first",
+    "drafts_next",
+    "expand",
+    "filter",
+    "first",
+    "folder",
+    "keyword_first",
+    "keyword_next",
+    "layout",
+    "move",
+    "next",
+    "outbox_first",
+    "outbox_next",
+    "partition_choose",
+    "partition_close",
+    "partition_field",
+    "partition_first",
+    "partition_next",
+    "partition_open",
+    "people",
+    "previous",
+    "related",
+    "related_first",
+    "related_mode",
+    "related_next",
+    "related_sort",
+    "rule_first",
+    "rule_next",
+    "search",
+    "search_delete",
+    "search_open",
+    "search_save",
+    "seek_thread",
+    "seek_unread",
+    "select",
+    "sort",
+    "thread_first",
+    "thread_next",
+    "threaded",
+    "toggle_selection",
+    // Changing mail.
+    "archive_messages",
+    "cancel_move",
+    "choose_copy",
+    "choose_move",
+    "copy_messages",
+    "dismiss_move",
+    "gmail_label_set",
+    "keyword_account",
+    "keyword_discard",
+    "keyword_label",
+    "keyword_retry",
+    "keyword_set",
+    "move_messages",
+    "selection_flag",
+    "star",
+    "thread_read",
+    "thread_unread",
+    "trash_messages",
+    "unread",
+    // Writing mail; `queue_only` puts a message in the Outbox without sending it.
+    "compose",
+    "draft",
+    "draft_account",
+    "draft_close",
+    "draft_detach",
+    "draft_discard",
+    "draft_identity",
+    "draft_open",
+    "draft_signature",
+    "forward",
+    "forward_text",
+    "outbox_cancel",
+    "outbox_edit",
+    "queue_only",
+    "reply",
+    "reply_all",
+    // Rules, folders and sync.
+    "cancel_sync",
+    "expunge_dismiss",
+    "folder_cancel",
+    "folder_create",
+    "folder_delete",
+    "folder_dismiss",
+    "folder_rename",
+    "folder_role",
+    "folder_sync",
+    "reindex",
+    "rule_apply",
+    "rule_delete",
+    "rule_save",
+    "sync",
+];
 
 /// The newest agent calls shown in the window.
 const RECENT: usize = 50;
@@ -155,10 +257,10 @@ impl Mail {
                     serde_json::from_str(&request.target).context("Invalid UI action")?;
                 let action = message.get("action").and_then(serde_json::Value::as_str);
                 anyhow::ensure!(action.is_some(), "Name the UI action");
-                // Only the user's click sends or approves a send.
+                // Only what agents may do; the rest is the user's own click.
                 anyhow::ensure!(
-                    !action.is_some_and(|action| SENDING.contains(&action)),
-                    "Only the user sends mail or approves a send; ask with send_draft"
+                    action.is_some_and(|action| AGENT_ACTIONS.contains(&action)),
+                    "Only the user can do that in Moonmail (send, files, accounts, settings); send_draft asks them to send"
                 );
                 let message = data_from_json(message);
                 let composer = self.composer_window_event(&message);
@@ -228,6 +330,7 @@ impl Mail {
                     .or_insert_with(|| uuid::Uuid::new_v4().to_string()).clone(),
                 "subject": draft.subject, "from": draft.sender(), "to": draft.recipients,
                 "cc": draft.cc, "bcc": draft.bcc, "attachments": draft.attachments.len(),
+                "files": draft.attachments.iter().map(|file| json!({ "name": file.name, "bytes": file.bytes })).collect::<Vec<_>>(),
                 "body": body, "truncated": body.len() < draft.body.len(),
             })
         }))
@@ -454,15 +557,46 @@ mod tests {
             json!({"action":"thread_read","args":{"id":-1}}),
         );
         assert!(failed.is_err(), "a failing action reports its error");
-        assert!(
-            tool(
-                dir.path(),
-                "app_action",
-                json!({"action":"send","args":{"id":1}})
-            )
-            .is_err(),
-            "only the user sends from the Outbox"
-        );
+        // Files, accounts, settings and sending stay the user's own clicks.
+        for action in [
+            "send",
+            "outbox_retry",
+            "agent_request",
+            "draft_attach",
+            "messages_save",
+            "message_save",
+            "attachment_save",
+            "mail_import",
+            "maildir_attach",
+            "login",
+            "account_password",
+            "disconnect",
+            "oauth_client_import",
+            "identity_save",
+            "settings_save",
+            "confirm_delete_message",
+            "reader_link",
+        ] {
+            assert!(
+                tool(
+                    dir.path(),
+                    "app_action",
+                    json!({"action":action,"args":{"id":1}})
+                )
+                .is_err(),
+                "{action} refused"
+            );
+        }
+        // The window refuses them too, even as a request written directly.
+        let raw = mail.archive()?.add_request(
+            "mcp",
+            "action",
+            r#"{"action":"draft_attach","path":"/etc/hosts","id":"x"}"#,
+            "raw",
+        )?;
+        mail.outside_changes()?;
+        let raw = mail.archive()?.agent_request(raw)?.context("request")?;
+        assert_eq!(raw.state, "failed");
         tool(dir.path(), "delete_draft", json!({"id":draft}))?;
         assert!(mail.outside_changes()?);
         assert!(mail.draft.is_none());

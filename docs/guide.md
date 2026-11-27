@@ -600,8 +600,12 @@ their JSON Schemas. Highlights:
   `update_draft`, `send_draft` (waits for your Send), `delete_draft`, `outbox`, `request_status`.
 - The window: `show_message`, `show_search`, `open_draft`, `sync`,
   `app_state` (what the window shows) and `app_action`, which does what a
-  click does with any of the window's actions (`compose`, `draft`, `queue`,
-  `folder`, `filter`, `layout`, `rule_save`, `settings_save`...).
+  click does: moving around and selecting, filing and tagging, composing and
+  editing drafts, rules, folders and sync (`compose`, `draft`, `folder`,
+  `filter`, `layout`, `rule_save`...). It takes an allow-list. Actions that
+  open a file picker (attach, save, import), change accounts, credentials,
+  identities or settings, open links, delete permanently, or send stay your
+  own clicks. The send card lists every attached file with its size.
 - Accounts: `accounts`, `add_account` (browser sign-in).
 
 **Agent CLI.** `moonmail agent TOOL --param value` prints one JSON document. It

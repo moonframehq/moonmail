@@ -5,7 +5,7 @@
 
 use {
     super::args::Args,
-    crate::provider::SENDING,
+    crate::provider::AGENT_ACTIONS,
     anyhow::{Context, Result, bail},
     moonmail_core::MailRepository,
     moonmail_store::{AgentRequest, Archive},
@@ -64,8 +64,10 @@ pub fn call(root: &Path, source: &str, name: &str, args: &Args<'_>) -> Result<(V
         },
         "app_action" => {
             let action = args.required("action")?;
-            if SENDING.contains(&action) {
-                bail!("Only the user sends mail or approves a send; use send_draft to ask them");
+            if !AGENT_ACTIONS.contains(&action) {
+                bail!(
+                    "Only the user can do `{action}` in Moonmail (send, files, accounts, settings); send_draft asks them to send"
+                );
             }
             let mut message = match args.0.get("args") {
                 None | Some(Value::Null) => serde_json::Map::new(),
