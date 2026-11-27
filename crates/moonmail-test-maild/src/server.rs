@@ -145,12 +145,11 @@ fn accept(listener: TcpListener, shared: Arc<Shared>, imap: bool, implicit: bool
                 let Ok(copy) = socket.try_clone() else {
                     continue;
                 };
-                if socket
-                    .set_read_timeout(Some(Duration::from_secs(10)))
-                    .is_err()
-                    || socket
-                        .set_write_timeout(Some(Duration::from_secs(10)))
-                        .is_err()
+                // Match the client connection budget. On macOS the first TLS
+                // handshake can wait for the system trust service under load.
+                let timeout = Some(Duration::from_secs(30));
+                if socket.set_read_timeout(timeout).is_err()
+                    || socket.set_write_timeout(timeout).is_err()
                 {
                     continue;
                 }
