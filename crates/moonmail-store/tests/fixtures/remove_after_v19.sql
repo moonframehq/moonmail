@@ -1,3 +1,4 @@
+DROP TRIGGER IF EXISTS jmap_deletion_arrival;
 DROP TRIGGER invalidate_discarded_keyword;
 DROP TRIGGER invalidate_imap_checkpoint;
 ALTER TABLE mailboxes DROP COLUMN highest_modseq;

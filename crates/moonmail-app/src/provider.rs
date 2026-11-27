@@ -376,9 +376,12 @@ impl Mail {
         for folder in &mailboxes {
             if !self.demo
                 && folder.account != "local"
-                && folder.epoch > 0
                 && let Some(role @ (MailboxRole::Trash | MailboxRole::Junk)) = folder.role
                 && archive.role_mailbox(&folder.account, role).ok() == Some(folder.id)
+                && (folder.epoch > 0
+                    || Account::load_for(&self.root, &folder.account)?
+                        .is_some_and(|a| a.transport == moonmail_network::Transport::Jmap)
+                        && archive.is_jmap_folder(folder.id)?)
             {
                 let (upper, selected_uid) = archive.deletion_bounds(
                     folder.id,

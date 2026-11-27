@@ -7,8 +7,8 @@ use {
     rusqlite::{Connection, OpenFlags, params},
     serde_json::Value,
     std::{
-        io::{BufRead, BufReader, Read},
         path::Path,
+        thread,
         time::{Duration, Instant},
     },
 };
@@ -36,31 +36,24 @@ fn sync(client: &Client, address: &str, archive: &mut Archive, blobs: &FileBlobs
     Ok(())
 }
 
-fn verify_event(stream: impl Read, account: &str) -> Result {
-    let mut event = String::new();
-    let mut data = String::new();
-    for line in BufReader::new(stream.take(65536)).lines() {
-        let line = line?;
-        if line.is_empty() {
-            if event == "state" {
-                let state: Value = serde_json::from_str(&data)?;
-                assert_eq!(state["@type"], "StateChange");
-                assert!(
-                    state["changed"][account]["Email"].is_string(),
-                    "Push omitted recipient email state"
-                );
-                return Ok(());
+fn wait_for_sync(worker: &moonmail_network::LiveAccount, mut passes: usize) -> Result {
+    let end = Instant::now() + Duration::from_secs(20);
+    while Instant::now() < end {
+        for event in worker.events() {
+            match event {
+                moonmail_network::LiveStatus::Error { error, .. } => return Err(error.into()),
+                moonmail_network::LiveStatus::Waiting => {
+                    passes -= 1;
+                    if passes == 0 {
+                        return Ok(());
+                    }
+                },
+                _ => {},
             }
-            event.clear();
-            data.clear();
-        } else if let Some(kind) = line.strip_prefix("event:") {
-            event = kind.trim_start().to_owned();
-        } else if let Some(value) = line.strip_prefix("data:") {
-            data.push_str(value.trim_start());
-            data.push('\n');
         }
+        thread::sleep(Duration::from_millis(20));
     }
-    Err("No recipient Email state event received".into())
+    Err("Account worker missed a push-triggered synchronization".into())
 }
 
 fn delivered(
@@ -118,7 +111,16 @@ fn two_account_round_trip() -> Result {
     let blobs = FileBlobs::new(root);
     sync(&b, BOB, &mut archive, &blobs)?;
     let before = archive.jmap_states(BOB)?.1;
-    let events = b.events()?;
+    let worker_session = session.clone();
+    let token = SecretString::from(std::env::var("MOONMAIL_STALWART_BOB_TOKEN")?);
+    let worker = moonmail_network::LiveAccount::start_jmap_with(
+        root.to_owned(),
+        BOB.into(),
+        60,
+        move || Ok(Client::discover(&worker_session, token.clone())?),
+    )?;
+    // Initial sync and the subscription catch-up both finish before submission.
+    wait_for_sync(&worker, 2)?;
     let run = uuid::Uuid::new_v4().to_string();
     let draft = Draft {
         id: run.clone(),
@@ -138,11 +140,11 @@ fn two_account_round_trip() -> Result {
     archive.prepare_sent_copy(outbox, false)?;
     transmit_queued(&archive, ALICE, outbox, &blobs, &mut a)?;
     assert_eq!(archive.outbox_item(outbox)?.state, "sent");
-    verify_event(events, b.account_id())?;
+    wait_for_sync(&worker, 1)?;
+    drop(worker);
     println!("Recipient push verified after frozen outbox submission");
     drop(archive);
     let mut archive = Archive::open(root)?;
-    sync(&b, BOB, &mut archive, &blobs)?;
     assert_ne!(archive.jmap_states(BOB)?.1, before);
     let (id, remote) = delivered(&archive, root, BOB, MailboxRole::Inbox, &rfc, &draft.body)?;
     sync(&a, ALICE, &mut archive, &blobs)?;
@@ -237,7 +239,62 @@ fn two_account_round_trip() -> Result {
             .iter()
             .any(|(_, _, n)| n == "Reviewed")
     );
-    b.destroy_email(&remote)?;
+    let trash = archive.role_mailbox(BOB, MailboxRole::Trash)?;
+    let trash_name = archive
+        .jmap_folder_map(BOB)?
+        .into_iter()
+        .find(|(_, id, _)| *id == trash)
+        .ok_or("Missing Trash")?
+        .2;
+    let (revision, _) = archive.deletion_bounds(trash, 0, None)?;
+    assert_eq!(
+        archive.queue_expunge(
+            BOB,
+            trash,
+            &trash_name,
+            0,
+            MailboxRole::Trash,
+            moonmail_store::DeletionTarget::Through(revision)
+        )?,
+        1
+    );
+    sync(&b, BOB, &mut archive, &blobs)?;
+    sync(&b, BOB, &mut witness, &observed_blobs)?;
+    assert_eq!(membership(observer.path(), observed)?, ["Archived mail"]);
+    archive.queue_moves(
+        &[id],
+        Some(archive.role_mailbox(BOB, MailboxRole::Archive)?),
+        MoveTarget::Role(MailboxRole::Trash),
+    )?;
+    sync(&b, BOB, &mut archive, &blobs)?;
+    assert!(
+        archive
+            .queue_expunge(
+                BOB,
+                trash,
+                &trash_name,
+                0,
+                MailboxRole::Trash,
+                moonmail_store::DeletionTarget::Through(revision)
+            )
+            .is_err()
+    );
+    let (_, uid) = archive.deletion_bounds(trash, 0, Some(id))?;
+    assert_eq!(
+        archive.queue_expunge(
+            BOB,
+            trash,
+            &trash_name,
+            0,
+            MailboxRole::Trash,
+            moonmail_store::DeletionTarget::Message(id, uid.ok_or("Missing Trash member")?)
+        )?,
+        1
+    );
+    drop(archive);
+    let mut archive = Archive::open(root)?;
+    sync(&b, BOB, &mut archive, &blobs)?;
+    assert_eq!(archive.unresolved_remote_count()?, 0);
     sync(&b, BOB, &mut witness, &observed_blobs)?;
     assert!(membership(observer.path(), observed)?.is_empty());
     println!(

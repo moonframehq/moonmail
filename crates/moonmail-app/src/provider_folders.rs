@@ -15,9 +15,12 @@ impl Mail {
                 .context("Missing confirmation scope")
         };
         let account = text("account")?;
+        let epoch: u32 = number("epoch")?.try_into()?;
         anyhow::ensure!(
             !self.demo
-                && Account::load_for(&self.root, account)?.is_some()
+                && Account::load_for(&self.root, account)?.is_some_and(|a| (a.transport
+                    == moonmail_network::Transport::Jmap)
+                    == (epoch == 0))
                 && message.get("confirmed").and_then(Data::as_bool) == Some(true),
             "Confirm deletion for a connected account"
         );
@@ -34,7 +37,7 @@ impl Mail {
             account,
             number("id")?,
             text("name")?,
-            number("epoch")?.try_into()?,
+            epoch,
             role,
             target,
         )?;
@@ -203,6 +206,45 @@ mod tests {
 #[cfg(test)]
 mod expunge_tests {
     use super::{super::tests::data, *};
+    #[test]
+    fn jmap_trash_confirmation_uses_the_bound_transport_and_current_folder() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        crate::fonts::Preferences {
+            sync_paused: true,
+            ..Default::default()
+        }
+        .save(dir.path())?;
+        let mut account = Account::fastmail("test@example.org")?;
+        account.transport = moonmail_network::Transport::Jmap;
+        account.save(dir.path())?;
+        let mut db = Archive::open(dir.path())?;
+        db.bind_jmap(&account.email, "account")?;
+        db.jmap_folders(
+            &account.email,
+            &[moonmail_store::JmapFolder {
+                remote: "t".into(),
+                path: "Deleted".into(),
+                role: Some(MailboxRole::Trash),
+            }],
+            "f",
+        )?;
+        let mut mail = Mail::new(dir.path().to_owned(), false);
+        mail.initialize()?;
+        let mut request = mail.snapshot()?["deletion_folders"][0].clone();
+        assert_eq!(request["epoch"], 0);
+        assert_eq!(request["name"], "Deleted");
+        request["action"] = json!("confirm_empty_folder");
+        assert!(mail.handle(data(request.clone())).is_err());
+        request["confirmed"] = json!(true);
+        mail.handle(data(request.clone()))?;
+        request["upper"] = json!(22);
+        assert!(mail.handle(data(request.clone())).is_err());
+        account.transport = moonmail_network::Transport::Imap;
+        account.save(dir.path())?;
+        assert!(mail.handle(data(request)).is_err());
+        Ok(())
+    }
+
     #[test]
     fn empty_folder_requires_explicit_confirmation_and_the_original_role_and_epoch() -> Result<()> {
         let dir = tempfile::tempdir()?;

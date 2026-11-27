@@ -180,7 +180,14 @@ impl Client {
                 "Email/get",
                 json!({"ids":[email],"properties":["mailboxIds"]}),
             )?;
-            if data["list"][0]["mailboxIds"][source] != true {
+            let list = data["list"].as_array().ok_or(JmapError::Protocol)?;
+            if !list.is_empty() && (list.len() != 1 || list[0]["id"] != email) {
+                return Err(JmapError::Protocol.into());
+            }
+            if list
+                .first()
+                .is_none_or(|row| row["mailboxIds"][source] != true)
+            {
                 archive.fail_queued_move(op.id, "Source membership disappeared")?;
                 continue;
             }
@@ -259,9 +266,12 @@ impl Client {
 fn operation_result(result: &Result<()>) -> (&'static str, &'static str) {
     match result {
         Ok(()) => ("done", "Fastmail acknowledged the change"),
-        Err(JmapError::Rejected | JmapError::NotFound | JmapError::Unauthorized) => {
-            ("failed", "Fastmail rejected the change")
-        },
+        Err(
+            JmapError::Rejected
+            | JmapError::NotFound
+            | JmapError::Unauthorized
+            | JmapError::StateMismatch,
+        ) => ("failed", "Fastmail rejected the change"),
         Err(_) => (
             "unknown",
             "JMAP response was interrupted; inspect the folder before retrying",

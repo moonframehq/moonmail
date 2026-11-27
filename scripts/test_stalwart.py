@@ -80,7 +80,7 @@ def provision(base, admin, user):
     return password, grant["access_token"]
 
 
-def run(root, benchmark=False, *, setup_mail=None):
+def run(root, benchmark=False, *, setup_mail=None, executable_test=None, test_env=None):
     executable = binary(root)
     with socket.socket() as sock:
         sock.bind(("127.0.0.1", 0))
@@ -131,7 +131,7 @@ webadmin.resource = "file://{root}/web.zip"
         created = request(base + "/api/principal", auth=admin, body={"type": "domain", "name": DOMAIN})
         if "data" not in created:
             raise RuntimeError("Could not create synthetic domain")
-        env = os.environ.copy()
+        env = dict(os.environ if test_env is None else test_env)
         env["MOONMAIL_STALWART_URL"] = base + "/jmap/session"
         for user in ("alice", "bob"):
             secret, token = provision(base, admin, user)
@@ -145,8 +145,9 @@ webadmin.resource = "file://{root}/web.zip"
                            check=True, env=env)
             return
         print("Stalwart ready. Two synthetic accounts have independent bearer grants.", flush=True)
-        subprocess.run(["cargo", "test", "--locked", "-p", "moonmail-network", "--test",
-                        "stalwart", "--", "--ignored", "--exact",
+        command = [executable_test] if executable_test else [
+            "cargo", "test", "--locked", "-p", "moonmail-network", "--test", "stalwart", "--"]
+        subprocess.run([*command, "--ignored", "--exact",
                         "sync_performance" if benchmark else "two_account_round_trip",
                         "--nocapture"], check=True, env=env)
     finally:

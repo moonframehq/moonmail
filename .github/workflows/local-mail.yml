@@ -42,7 +42,17 @@ jobs:
         run: docker build -f docker/test-maild.Dockerfile -t moonmail-test-maild:ci .
       - name: Test both TLS modes against the image
         run: python3 scripts/test_maild_docker.py moonmail-test-maild:ci
-      - name: Verify two-account JMAP delivery, push, and edits with Stalwart
-        run: python3 scripts/test_stalwart.py
+      - name: Install coverage tools for the pinned compiler
+        run: rustup component add llvm-tools-preview
+      - name: Measure JMAP coverage with mocks and two-account Stalwart delivery
+        run: |
+          python3 -B scripts/jmap_coverage.py | tee jmap-coverage.txt
+          {
+            echo '### JMAP coverage'
+            echo '```text'
+            sed -n '/^Filename.*Regions/,$p' jmap-coverage.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+        shell: bash
       - name: Verify IMAP and SMTP against Stalwart with both TLS modes
         run: python3 -B scripts/test_stalwart_imap.py

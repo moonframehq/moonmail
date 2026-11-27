@@ -125,3 +125,6 @@ bench-jmap:
 # Real independent server with two accounts and validated implicit TLS and STARTTLS.
 test-stalwart-imap-smtp:
     python3 -B scripts/test_stalwart_imap.py
+
+coverage-jmap:
+    python3 -B scripts/jmap_coverage.py

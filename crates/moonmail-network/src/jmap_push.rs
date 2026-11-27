@@ -26,10 +26,13 @@ pub(super) fn listen(
                 };
                 // A timeout or an interrupted stream reconnects. The periodic sync
                 // on the owning worker covers gaps between event subscriptions.
-                let changed = client
-                    .events()
-                    .ok()
-                    .is_some_and(|response| state_changed(response, &client.account));
+                let changed = client.events().ok().is_some_and(|response| {
+                    // Catch changes between the last checkpoint and subscription, including reconnects.
+                    if active.upgrade().is_some() {
+                        wake();
+                    }
+                    state_changed(response, &client.account)
+                });
                 if active.strong_count() == 0 {
                     break;
                 }
@@ -65,11 +68,4 @@ fn state_changed(stream: impl Read, account: &str) -> bool {
 }
 
 #[cfg(test)]
-mod tests {
-    #[test]
-    fn wakes_for_relevant_account_changes_only() {
-        let event = b": ping\n\nevent: state\ndata: {\"@type\":\"StateChange\",\"changed\":{\"a\":{\"Email\":\"s\"}}}\n\n";
-        assert!(super::state_changed(&event[..], "a"));
-        assert!(!super::state_changed(&event[..], "b"));
-    }
-}
+mod tests;

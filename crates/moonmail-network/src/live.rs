@@ -61,6 +61,31 @@ impl LiveAccount {
         minutes: u16,
         connect: impl Fn(&Account) -> Result<RustImap> + Send + 'static,
     ) -> Result<Self> {
+        if account.transport == crate::Transport::Jmap {
+            let email = account.email.clone();
+            return Self::start_jmap_with(root, email, minutes, move || {
+                let secret = Auth::new(Keychain).credentials_for(&account)?;
+                Ok(crate::jmap::Client::fastmail(secret.value)?)
+            });
+        }
+        Self::spawn(minutes, move |owner| {
+            owner.run(|failures| owner.connected(&root, &account, &connect, failures));
+        })
+    }
+
+    /// The account worker owns discovery, push subscription and durable synchronization.
+    pub fn start_jmap_with(
+        root: PathBuf,
+        email: String,
+        minutes: u16,
+        connect: impl Fn() -> Result<crate::jmap::Client> + Send + 'static,
+    ) -> Result<Self> {
+        Self::spawn(minutes, move |owner| {
+            owner.run(|failures| owner.connected_jmap(&root, &email, &connect, failures));
+        })
+    }
+
+    fn spawn(minutes: u16, run: impl FnOnce(Arc<Control>) + Send + 'static) -> Result<Self> {
         let (events, receiver) = mpsc::channel();
         let control = Arc::new(Control {
             command: Arc::new(AtomicU8::new(if minutes == 0 { NONE } else { SYNC })),
@@ -70,7 +95,7 @@ impl LiveAccount {
         let owner = control.clone();
         let worker = thread::Builder::new()
             .name("moonmail-account".into())
-            .spawn(move || owner.run(&root, &account, connect))?;
+            .spawn(move || run(owner))?;
         Ok(Self {
             control,
             events: receiver,
@@ -135,7 +160,7 @@ impl Control {
     fn emit(&self, status: LiveStatus) {
         let _ = self.events.send(status);
     }
-    fn run(&self, root: &Path, account: &Account, connect: impl Fn(&Account) -> Result<RustImap>) {
+    fn run(&self, connected: impl Fn(&mut u32) -> Result<()>) {
         if self.minutes.load(Ordering::Acquire) == 0 {
             self.emit(LiveStatus::Manual);
             while self.command() == NONE {
@@ -156,7 +181,7 @@ impl Control {
                 SYNC => failures = 0,
                 _ => {},
             }
-            if let Err(error) = self.connected(root, account, &connect, &mut failures) {
+            if let Err(error) = connected(&mut failures) {
                 if self.command() >= PAUSE {
                     continue;
                 }
@@ -178,9 +203,14 @@ impl Control {
         }
     }
 
-    fn connected_jmap(&self, root: &Path, account: &Account, failures: &mut u32) -> Result<()> {
-        let secret = Auth::new(Keychain).credentials_for(account)?;
-        let mut client = Arc::new(crate::jmap::Client::fastmail(secret.value)?);
+    fn connected_jmap(
+        &self,
+        root: &Path,
+        email: &str,
+        connect: &impl Fn() -> Result<crate::jmap::Client>,
+        failures: &mut u32,
+    ) -> Result<()> {
+        let mut client = Arc::new(connect()?);
         let mut refreshed = false;
         let mut archive = Archive::open(root)?;
         let blobs = moonmail_store::FileBlobs::new(root);
@@ -197,7 +227,7 @@ impl Control {
             }
             self.emit(LiveStatus::Syncing);
             let result = client.sync(
-                &account.email,
+                email,
                 &mut archive,
                 &blobs,
                 |_| {},
@@ -210,8 +240,7 @@ impl Control {
                 )
             {
                 watcher = None;
-                let secret = Auth::new(Keychain).credentials_for(account)?;
-                client = Arc::new(crate::jmap::Client::fastmail(secret.value)?);
+                client = Arc::new(connect()?);
                 refreshed = true;
                 continue;
             }
@@ -265,9 +294,6 @@ impl Control {
             return Ok(());
         }
         self.emit(LiveStatus::Syncing);
-        if account.transport == crate::Transport::Jmap {
-            return self.connected_jmap(root, account, failures);
-        }
         let mut imap = connect(account)?;
         let idle = imap.session.capabilities()?.has_str("IDLE");
         let mut archive = Archive::open(root)?;

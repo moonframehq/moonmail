@@ -531,7 +531,7 @@ return mod {
 			reader = ui.column { class = "form", grow = true,
 				ui.text { "Confirm permanent deletion", class = "title" },
 				ui.text { if item.message then "Permanently delete “" .. item.subject .. "” from " .. item.name .. "?" else "Permanently delete all messages from the last synced inventory of " .. item.name .. "?" },
-				ui.text { item.account .. " · This removes the server copies and cannot be undone." },
+				ui.text { item.account .. (if item.epoch == 0 then " · Messages filed elsewhere stay in those folders. Messages filed only here are deleted permanently." else " · This removes the server copies and cannot be undone.") },
 				ui.row { ui.button { label = "Cancel", msg = "organize" }, ui.button { label = "Confirm permanent deletion", msg = { confirm_expunge = true } } },
 			}
 		elseif state.pane == "organize" then
@@ -576,8 +576,8 @@ return mod {
 			for _, item in mail.remote_operations or {} do
 				table.insert(items, ui.row { ui.text { item.kind .. (if item.subject and item.subject ~= "" then " · " .. item.subject else "") .. " · " .. item.account .. " · " .. item.mailbox .. (if item.uid > 0 then " · UID " .. tostring(item.uid) else "") .. " · " .. item.state },
 					if item.kind == "Draft upload" then ui.button { label = "I checked Drafts for this copy — retry", disabled = mail.busy, msg = { action = "retry_draft_upload", message_id = item.message_id }, to = "provider:mail" } else nil,
-					if item.kind == "Delete" and item.state == "stale" then action("Dismiss changed UIDVALIDITY", "expunge_dismiss", { id = item.id }) else nil,
-					if item.kind == "Delete" and (item.state == "unknown" or item.state == "unsupported") then action("Retry verified UID", "expunge_retry", { id = item.id }) else nil,
+					if item.kind == "Delete" and item.state == "stale" then action("Dismiss changed target", "expunge_dismiss", { id = item.id }) else nil,
+					if item.kind == "Delete" and (item.state == "unknown" or item.state == "unsupported") then action("Retry deletion", "expunge_retry", { id = item.id }) else nil,
 				})
 			end
 			for _, item in mail.move_operations or {} do
