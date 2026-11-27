@@ -46,11 +46,17 @@ return component {
 				},
 			})
 		end
+		for _, vault in mail.msgvault_accounts or {} do
+			table.insert(accounts, ui.row { class = "mm-account-row", align = "center",
+				badge("database", "#8b929b"), ui.column { grow = true, gap = "small", ui.text { "msgvault", weight = "semibold" }, ui.text { string.match(vault.account, "^msgvault (.+)$") or vault.account, tone = "muted" }, ui.text { if vault.importing then "Read-only mirror · importing, newest first" else "Read-only mirror of your msgvault archive", tone = "muted", size = "small" } },
+				ui.button { label = "Remove", small = true, variant = "ghost", msg = { action = "msgvault_remove", account = vault.account }, to = "provider:mail", disabled = busy or mail.demo },
+			})
+		end
 		return ui.column { class = "mm-settings-content", grow = true, scroll = true,
 			ui.column { class = "mm-group", shrink = false,
 				if #accounts > 0 then ui.column { gap = "none", table.unpack(accounts) } else ui.column { class = "mm-account-empty", align = "center", badge("at-sign", "#3478f6"), ui.text { "Add your first account", weight = "semibold", size = "large" }, ui.text { "Keep your mail close. Your messages are stored locally.", tone = "muted" } },
 			},
-			ui.row { justify = "end", ui.button { label = "Add Account…", msg = "add-account", to = "settings", disabled = busy or mail.demo } },
+			ui.row { justify = "end", ui.button { label = "Find msgvault Accounts", small = true, variant = "ghost", msg = { action = "msgvault_restore" }, to = "provider:mail", disabled = busy or mail.demo }, ui.button { label = "Add Account…", msg = "add-account", to = "settings", disabled = busy or mail.demo } },
 			ui.text { "Choose a sending account in the composer’s From menu. Passwords and OAuth tokens stay in macOS Keychain.", class = "mm-caption" },
 			if mail.status and mail.status ~= "" then ui.text { mail.status, tone = "muted", size = "small" } else nil,
 			dialog { open = state.add_account, dismiss = "cancel-account", to = "settings", width = 620, height = if state.server_settings then 590 elseif state.provider_list then 540 elseif selected then 440 else 280, title = if state.editing_account then "Reconnect account" else "Add Account", hint = false, close = false,

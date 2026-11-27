@@ -221,3 +221,102 @@ fn the_worker_rescans_only_after_msgvault_commits() -> Result<()> {
     assert_eq!(vault.boxes()?, [("INBOX".into(), 2, 1)]);
     Ok(())
 }
+
+const ADA: &str = "msgvault ada@example.test";
+
+#[test]
+fn imports_newest_first_and_picks_up_arrivals_and_resumes() -> Result<()> {
+    let vault = Vault::new()?;
+    for id in 1..=450 {
+        vault.add(id, &format!("Message {id}"), true, &[1])?;
+    }
+    detect(vault.store.path(), &vault.path())?;
+    // Stop after the first backfill batch, as a quit would.
+    let mut archive = Archive::open(vault.store.path())?;
+    let blobs = FileBlobs::new(vault.store.path());
+    let db = open(&vault.path())?;
+    let account = archive.msgvault_accounts()?.remove(0);
+    let mut mirror = Mirror::new(&mut archive, &blobs, &db, &account)?;
+    mirror.archive.begin_msgvault(ADA, 450)?;
+    assert_eq!(mirror.batch(451, false)?, Some((251, 200)));
+    drop(mirror);
+    let states = archive.msgvault_states(ADA)?;
+    assert!(states.contains_key(&450) && states.contains_key(&251));
+    assert!(!states.contains_key(&250));
+    // The newest message was stored first.
+    assert!(states[&450].message.0 < states[&251].message.0);
+    let account = archive.msgvault_accounts()?.remove(0);
+    assert_eq!((account.cursor, account.backfill), (450, 251));
+    drop(archive);
+
+    vault.add(451, "Arrived meanwhile", false, &[1])?;
+    assert_eq!(vault.sync()?, 251);
+    let archive = Archive::open(vault.store.path())?;
+    let account = archive.msgvault_accounts()?.remove(0);
+    assert_eq!((account.cursor, account.backfill), (451, 0));
+    assert_eq!(archive.msgvault_states(ADA)?.len(), 451);
+    assert_eq!(vault.boxes()?, [("INBOX".into(), 451, 1)]);
+    Ok(())
+}
+
+#[test]
+fn removed_accounts_disappear_stay_removed_and_can_be_restored() -> Result<()> {
+    let vault = Vault::new()?;
+    vault.add(1, "Hello", false, &[1])?;
+    detect(vault.store.path(), &vault.path())?;
+    vault.sync()?;
+    let mut archive = Archive::open(vault.store.path())?;
+    archive.remove_msgvault(ADA)?;
+    assert!(archive.remove_msgvault(ADA).is_err());
+    assert!(archive.msgvault_accounts()?.is_empty());
+    assert!(archive.mailboxes()?.iter().all(|b| b.account != ADA));
+    drop(archive);
+    assert!(detect(vault.store.path(), &vault.path())?.is_empty());
+    Archive::open(vault.store.path())?.forget_removed_msgvault()?;
+    assert_eq!(detect(vault.store.path(), &vault.path())?, [ADA]);
+    vault.sync()?;
+    assert_eq!(vault.boxes()?, [("INBOX".into(), 1, 1)]);
+    Ok(())
+}
+
+#[test]
+fn a_removal_during_import_is_not_undone_by_the_import() -> Result<()> {
+    let vault = Vault::new()?;
+    vault.add(1, "Hello", false, &[1])?;
+    vault.add(2, "Again", false, &[1])?;
+    detect(vault.store.path(), &vault.path())?;
+    let mut archive = Archive::open(vault.store.path())?;
+    let blobs = FileBlobs::new(vault.store.path());
+    let db = open(&vault.path())?;
+    let account = archive.msgvault_accounts()?.remove(0);
+    Archive::open(vault.store.path())?.remove_msgvault(ADA)?;
+    let mut mirror = Mirror::new(&mut archive, &blobs, &db, &account)?;
+    assert_eq!(mirror.ingest(&mut |_| {})?, 0);
+    drop(mirror);
+    assert!(archive.mailboxes()?.iter().all(|b| b.account != ADA));
+    assert!(archive.msgvault_states(ADA)?.is_empty());
+    Ok(())
+}
+
+#[test]
+fn gmail_stars_follow_the_starred_label() -> Result<()> {
+    let vault = Vault::new()?;
+    vault
+        .db()?
+        .execute("INSERT INTO labels VALUES (9,1,'STARRED',NULL)", [])?;
+    vault.add(1, "Starred", true, &[1, 9])?;
+    detect(vault.store.path(), &vault.path())?;
+    vault.sync()?;
+    let starred = |vault: &Vault| -> Result<bool> {
+        let archive = Archive::open(vault.store.path())?;
+        let id = archive.msgvault_states(ADA)?[&1].message;
+        Ok(archive.detail(id)?.summary.starred)
+    };
+    assert!(starred(&vault)?);
+    vault
+        .db()?
+        .execute("DELETE FROM message_labels WHERE label_id=9", [])?;
+    vault.sync()?;
+    assert!(!starred(&vault)?);
+    Ok(())
+}

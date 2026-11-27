@@ -557,12 +557,13 @@ email becomes an account named **msgvault** followed by its address. Chats and
 other non-email sources are left out.
 
 A background worker copies each message's original MIME into Moonmail's
-archive, oldest first, and shows its progress in the status bar. A large
-archive takes a while the first time: about 30 messages a second, so roughly
-45 minutes for 85,000 messages. Messages whose bytes Moonmail already holds,
-such as the same account synced over IMAP or JMAP, share one copy on disk. The
-import resumes where it stopped after a quit. Run `moonmail msgvault` to mirror
-from the command line instead.
+archive, newest first, and shows its progress in the status bar. Mail that
+arrives in msgvault meanwhile is picked up between batches of older mail. A
+large archive takes a while the first time: about 30 messages a second, so
+roughly 45 minutes for 85,000 messages. Messages whose bytes Moonmail already
+holds, such as the same account synced over IMAP or JMAP, share one copy on
+disk. The import resumes where it stopped after a quit. Run `moonmail msgvault`
+to mirror from the command line instead.
 
 Under **Sources**, click an account's name to see only that account's mail, so a mailbox synced both directly and through msgvault does not show twice. The role groups under **Mailboxes** (Inbox, Archive, Sent, Junk, Trash) list each account separately, and **All Messages** shows every account together, duplicates included.
 
@@ -572,7 +573,14 @@ changes, read state and deletions. A deleted message leaves every folder; its
 original stays in the archive. Moonmail opens msgvault's database read-only and
 never writes to it, so moves and folder edits are refused for these accounts.
 Marking a message read in Moonmail lasts until msgvault reports a new read
-state. Set `MOONMAIL_MSGVAULT=0` to turn detection off.
+state. Gmail stars, kept by msgvault as the STARRED label, become flags.
+
+To hide a msgvault account, choose **Remove** next to it in **Settings →
+Accounts**, or run `moonmail msgvault remove "msgvault ADDRESS"`. Its mail
+leaves every view and detection skips it from then on; the originals stay in
+the archive. **Find msgvault Accounts** in Settings, or `moonmail msgvault
+restore`, adds removed accounts again. Set `MOONMAIL_MSGVAULT=0` to turn
+detection off entirely.
 
 ## Share a live Maildir with Mutt and mbsync
 
