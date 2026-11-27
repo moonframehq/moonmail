@@ -106,6 +106,14 @@ just ci
   rules, with every remote change queued and visible.
 - **Make it yours**: restyle it in Settings, or ask a coding agent to change it
   while it runs.
+- **Assistant**: a chat panel (⌘J) running Claude, Codex, OpenCode, pi or
+  Gemini over ACP, through Sheprd's `herdr-acp`. It can do anything you can do in
+  Moonmail, asks before anything that writes, never sends without your click,
+  and logs every step.
+  [Assistant and agent tools](docs/guide.md#assistant-agent-cli-and-mcp).
+- **Agent tools**: the same tools for any agent, as `moonmail mcp` (stdio MCP
+  server) or `moonmail agent` (JSON CLI), while the app is open; the window
+  updates as each change lands.
 
 ## What it does not do yet
 

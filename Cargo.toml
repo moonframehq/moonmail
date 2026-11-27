@@ -38,7 +38,7 @@ mail-builder             = "2"
 mail-parser              = { features = ["full_encoding"], version = "1.0.1" }
 mail-send                = { default-features = false, features = ["aws_lc_rs", "tls12"], version = "0.7" }
 mailparse                = "0.18"
-moonframe                = { default-features = false, features = ["acp", "browser", "markdown", "studio"], git = "https://github.com/moonframehq/moonframe", rev = "0a98dffd238bf0ab6c1dae9343eae8776ce9cbaf" }
+moonframe                = { default-features = false, features = ["acp", "browser", "chat", "markdown", "studio"], git = "https://github.com/moonframehq/moonframe", rev = "7163be303a2917263890b1be6caef32406d95f74" }
 moonmail-core            = { path = "crates/moonmail-core" }
 moonmail-mime            = { path = "crates/moonmail-mime" }
 moonmail-network         = { path = "crates/moonmail-network" }

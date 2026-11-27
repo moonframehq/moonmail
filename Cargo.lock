@@ -5166,7 +5166,7 @@ dependencies = [
 [[package]]
 name = "moonframe"
 version = "1.8.0"
-source = "git+https://github.com/moonframehq/moonframe?rev=0a98dffd238bf0ab6c1dae9343eae8776ce9cbaf#0a98dffd238bf0ab6c1dae9343eae8776ce9cbaf"
+source = "git+https://github.com/moonframehq/moonframe?rev=7163be303a2917263890b1be6caef32406d95f74#7163be303a2917263890b1be6caef32406d95f74"
 dependencies = [
  "anstream",
  "anstyle",
@@ -5182,6 +5182,7 @@ dependencies = [
  "lb-wry",
  "markdown",
  "moonframe-acp",
+ "moonframe-chat",
  "moonframe-core",
  "moonframe-history",
  "moonframe-packages",
@@ -5208,7 +5209,7 @@ dependencies = [
 [[package]]
 name = "moonframe-acp"
 version = "1.8.0"
-source = "git+https://github.com/moonframehq/moonframe?rev=0a98dffd238bf0ab6c1dae9343eae8776ce9cbaf#0a98dffd238bf0ab6c1dae9343eae8776ce9cbaf"
+source = "git+https://github.com/moonframehq/moonframe?rev=7163be303a2917263890b1be6caef32406d95f74#7163be303a2917263890b1be6caef32406d95f74"
 dependencies = [
  "agent-client-protocol-schema",
  "libc",
@@ -5220,9 +5221,32 @@ dependencies = [
 ]
 
 [[package]]
+name = "moonframe-chat"
+version = "1.8.0"
+source = "git+https://github.com/moonframehq/moonframe?rev=7163be303a2917263890b1be6caef32406d95f74#7163be303a2917263890b1be6caef32406d95f74"
+dependencies = [
+ "moonframe-chat-view",
+ "moonframe-core",
+ "moonframe-providers",
+ "rustix",
+ "serde_json",
+ "sheprd-chat-protocol",
+ "tracing",
+]
+
+[[package]]
+name = "moonframe-chat-view"
+version = "1.8.0"
+source = "git+https://github.com/moonframehq/moonframe?rev=7163be303a2917263890b1be6caef32406d95f74#7163be303a2917263890b1be6caef32406d95f74"
+dependencies = [
+ "serde",
+ "sheprd-chat-protocol",
+]
+
+[[package]]
 name = "moonframe-core"
 version = "1.8.0"
-source = "git+https://github.com/moonframehq/moonframe?rev=0a98dffd238bf0ab6c1dae9343eae8776ce9cbaf#0a98dffd238bf0ab6c1dae9343eae8776ce9cbaf"
+source = "git+https://github.com/moonframehq/moonframe?rev=7163be303a2917263890b1be6caef32406d95f74#7163be303a2917263890b1be6caef32406d95f74"
 dependencies = [
  "chrono",
  "fluent-bundle",
@@ -5243,7 +5267,7 @@ dependencies = [
 [[package]]
 name = "moonframe-history"
 version = "1.8.0"
-source = "git+https://github.com/moonframehq/moonframe?rev=0a98dffd238bf0ab6c1dae9343eae8776ce9cbaf#0a98dffd238bf0ab6c1dae9343eae8776ce9cbaf"
+source = "git+https://github.com/moonframehq/moonframe?rev=7163be303a2917263890b1be6caef32406d95f74#7163be303a2917263890b1be6caef32406d95f74"
 dependencies = [
  "tracing",
 ]
@@ -5251,7 +5275,7 @@ dependencies = [
 [[package]]
 name = "moonframe-packages"
 version = "1.8.0"
-source = "git+https://github.com/moonframehq/moonframe?rev=0a98dffd238bf0ab6c1dae9343eae8776ce9cbaf#0a98dffd238bf0ab6c1dae9343eae8776ce9cbaf"
+source = "git+https://github.com/moonframehq/moonframe?rev=7163be303a2917263890b1be6caef32406d95f74#7163be303a2917263890b1be6caef32406d95f74"
 dependencies = [
  "moonframe-core",
  "moonframe-providers",
@@ -5265,7 +5289,7 @@ dependencies = [
 [[package]]
 name = "moonframe-provider"
 version = "0.4.0"
-source = "git+https://github.com/moonframehq/moonframe?rev=0a98dffd238bf0ab6c1dae9343eae8776ce9cbaf#0a98dffd238bf0ab6c1dae9343eae8776ce9cbaf"
+source = "git+https://github.com/moonframehq/moonframe?rev=7163be303a2917263890b1be6caef32406d95f74#7163be303a2917263890b1be6caef32406d95f74"
 dependencies = [
  "serde",
  "serde_json",
@@ -5275,7 +5299,7 @@ dependencies = [
 [[package]]
 name = "moonframe-providers"
 version = "1.8.0"
-source = "git+https://github.com/moonframehq/moonframe?rev=0a98dffd238bf0ab6c1dae9343eae8776ce9cbaf#0a98dffd238bf0ab6c1dae9343eae8776ce9cbaf"
+source = "git+https://github.com/moonframehq/moonframe?rev=7163be303a2917263890b1be6caef32406d95f74#7163be303a2917263890b1be6caef32406d95f74"
 dependencies = [
  "libc",
  "moonframe-core",
@@ -5290,7 +5314,7 @@ dependencies = [
 [[package]]
 name = "moonframe-store"
 version = "1.8.0"
-source = "git+https://github.com/moonframehq/moonframe?rev=0a98dffd238bf0ab6c1dae9343eae8776ce9cbaf#0a98dffd238bf0ab6c1dae9343eae8776ce9cbaf"
+source = "git+https://github.com/moonframehq/moonframe?rev=7163be303a2917263890b1be6caef32406d95f74#7163be303a2917263890b1be6caef32406d95f74"
 dependencies = [
  "moonframe-core",
  "rusqlite",
@@ -8369,6 +8393,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32824fab5e16e6c4d86dc1ba84489390419a39f97699852b66480bb87d297ed8"
 dependencies = [
  "dirs 6.0.0",
+]
+
+[[package]]
+name = "sheprd-chat-protocol"
+version = "0.1.0"
+source = "git+https://github.com/penso/herdr-gpui?rev=7947567ddc1ede4e6940a2a8d388ba2182249445#7947567ddc1ede4e6940a2a8d388ba2182249445"
+dependencies = [
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+ "uuid",
 ]
 
 [[package]]

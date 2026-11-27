@@ -1,4 +1,5 @@
 //! Durable local archive and rebuildable projections.
+mod activity;
 mod archive;
 mod blobs;
 mod correspondents;
@@ -22,6 +23,7 @@ mod queries;
 mod relationships;
 mod remote_drafts;
 mod replies;
+mod requests;
 mod rules;
 mod saved_searches;
 mod search;
@@ -32,6 +34,7 @@ mod sync_inventory;
 mod thread_graph;
 
 pub use {
+    activity::{Activity, Call},
     archive::{Archive, IncomingMessage, IndexWork, StoredMime},
     blobs::{BlobError, FileBlobs, content_digest},
     correspondents::Correspondent,
@@ -53,6 +56,7 @@ pub use {
     outbox::{OutboxItem, OutboxPage},
     partitions::{PartitionBucket, PartitionField, PartitionPage},
     remote_drafts::RemoteDraftSource,
+    requests::AgentRequest,
     rules::{KeywordRule, KeywordRuleRun},
     saved_searches::SavedSearch,
     sync_inventory::{GmailMetadata, InventoryKind, SyncCheckpoint, SyncFlags, SyncMessage},

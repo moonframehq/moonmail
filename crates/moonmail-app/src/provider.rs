@@ -41,6 +41,9 @@ mod navigation;
 mod navigation_tests;
 #[path = "provider_outbox.rs"]
 mod outbox;
+#[path = "provider_outside.rs"]
+mod outside;
+pub(crate) use outside::SENDING;
 #[path = "provider_partitions.rs"]
 mod partitions;
 #[path = "provider_reader.rs"]
@@ -125,6 +128,7 @@ pub struct Mail {
     discovery: Option<crate::account_setup::Discovery>,
     discovery_job: Option<Receiver<std::result::Result<crate::account_setup::Discovery, String>>>,
     discovery_error: String,
+    outside: outside::Outside,
 }
 
 impl Mail {
@@ -187,6 +191,7 @@ impl Mail {
             discovery: None,
             discovery_job: None,
             discovery_error: String::new(),
+            outside: outside::Outside::default(),
         }
     }
     pub fn with_font_config(mut self, path: PathBuf) -> Self {
@@ -361,6 +366,7 @@ impl Mail {
         });
         snapshot["account"] = json!(self.query.account);
         snapshot["outbox_more"] = json!(outbox.next.is_some());
+        self.outside_snapshot(&mut snapshot)?;
         self.sender_snapshot(&mut snapshot)?;
         if let Some(rows) = snapshot["drafts"]["rows"].as_array_mut() {
             for row in rows {
@@ -508,6 +514,47 @@ impl Mail {
         Ok(())
     }
 
+    /// Freeze a draft into the outbox; `send` starts delivery at once.
+    fn queue_draft(&mut self, draft: Draft, send: bool) -> Result<()> {
+        if send && self.demo {
+            bail!("Sending is disabled in the synthetic demo");
+        }
+        if send && self.job.is_some() {
+            bail!("Wait for the current network operation to finish");
+        }
+        let account = if self.demo && draft.account == "you@example.com" {
+            Account::fastmail("you@example.com")?
+        } else {
+            Account::load_for(&self.root, &draft.account)?
+                .context("Reconnect this draft's sending account or choose another From account")?
+        };
+        let (raw, recipients) = moonmail_network::prepare_message_with_attachments(
+            &account,
+            &draft,
+            &FileBlobs::attachments(&self.root),
+        )?;
+        let blob = FileBlobs::new(&self.root).put(&raw)?;
+        let parsed =
+            moonmail_core::MimeParser::parse(&moonmail_mime::StalwartParser::default(), &raw)?;
+        let id = self.archive_mut()?.queue_with_message_id(
+            &draft,
+            &account.email,
+            &blob,
+            &recipients,
+            parsed.message_id.as_deref(),
+        )?;
+        if self.draft.as_ref().is_some_and(|open| open.id == draft.id) {
+            self.draft = None;
+        }
+        self.outbox_before = None;
+        if send {
+            self.launch(move |root, _| Ok(moonmail_network::send_queued(&root, id)?))?;
+        } else {
+            self.status = "Queued locally. Open Outbox to send, edit, or cancel.".into();
+        }
+        Ok(())
+    }
+
     fn handle(&mut self, message: Data) -> Result<()> {
         let text = |key| {
             message
@@ -528,6 +575,7 @@ impl Mail {
             "people" => self.people = self.archive()?.frequent_correspondents(30)?,
             "partition_open" | "partition_field" | "partition_first" | "partition_next"
             | "partition_choose" => self.handle_partition(&action, &message)?,
+            "agent_request" => self.handle_agent_request(&message)?,
             "rule_save" | "rule_delete" | "rule_apply" | "rule_first" | "rule_next" => {
                 self.handle_rule(&action, &message)?
             },
@@ -1024,37 +1072,7 @@ impl Mail {
                     draft.id == text("id"),
                     "This compose view is stale; reopen the intended draft"
                 );
-                let account = if self.demo && draft.account == "you@example.com" {
-                    Account::fastmail("you@example.com")?
-                } else {
-                    Account::load_for(&self.root, &draft.account)?.context(
-                        "Reconnect this draft's sending account or choose another From account",
-                    )?
-                };
-                let (raw, recipients) = moonmail_network::prepare_message_with_attachments(
-                    &account,
-                    &draft,
-                    &FileBlobs::attachments(&self.root),
-                )?;
-                let blob = FileBlobs::new(&self.root).put(&raw)?;
-                let parsed = moonmail_core::MimeParser::parse(
-                    &moonmail_mime::StalwartParser::default(),
-                    &raw,
-                )?;
-                let id = self.archive_mut()?.queue_with_message_id(
-                    &draft,
-                    &account.email,
-                    &blob,
-                    &recipients,
-                    parsed.message_id.as_deref(),
-                )?;
-                self.draft = None;
-                self.outbox_before = None;
-                if action == "queue" {
-                    self.launch(move |root, _| Ok(moonmail_network::send_queued(&root, id)?))?;
-                } else {
-                    self.status = "Queued locally. Open Outbox to send, edit, or cancel.".into();
-                }
+                self.queue_draft(draft, action == "queue")?;
             },
             "send" => {
                 let id = message
@@ -1136,6 +1154,7 @@ impl Mail {
         self.index = Some(crate::local::open_index(&self.root, &archive)?);
         self.draft = archive.latest_draft()?;
         self.archive = Some(archive);
+        self.watch_outside()?;
         self.start_maildir()?;
         if self.preferences.sync_paused {
             self.workers.pause();
@@ -1235,7 +1254,14 @@ impl Native for Mail {
                 self.error = format!("{error:#}");
             }
         }
-        let mut maildir_changed = false;
+        let mut maildir_changed = match self.outside_changes() {
+            Ok(outside) => outside,
+            Err(error) => {
+                self.error = format!("{error:#}");
+                true
+            },
+        };
+        changed |= maildir_changed;
         if let Some(worker) = &self.maildir {
             for event in worker.events.try_iter() {
                 changed = true;
@@ -1313,6 +1339,9 @@ impl Native for Mail {
         }
         if changed && let Err(error) = self.refresh().and_then(|()| self.publish(host)) {
             host.fail(format!("{error:#}"));
+        }
+        if let Some(event) = self.outside.composer.take() {
+            host.send("mail-composer", event.into());
         }
     }
 }

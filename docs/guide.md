@@ -540,6 +540,117 @@ To run locally with the same four secrets already exported in your shell:
 MOONMAIL_LIVE_GMAIL=1 cargo test --locked -p moonmail-network --test gmail_live gmail_round_trip -- --ignored --exact --nocapture
 ```
 
+## Assistant, agent CLI, and MCP
+
+Agents can do anything you can do in Moonmail: read and search, file, tag and
+flag, write rules and saved searches, manage folders and accounts, write and
+send email, and drive the window itself. Tools that change mail or the app ask
+you first, through the agent's own permission prompt. Sending is held by
+Moonmail itself, whatever the agent does: every call, reads included, is
+logged.
+
+**Sending needs your click.** `send_draft` (and `app_action` with `queue`)
+never send. They put a card in the assistant panel showing From, To, Cc, Bcc,
+attachments, subject and body, with **Review**, **Deny** and **Send**. The
+panel opens by itself while one waits. Send approves exactly what the card
+shows: if the draft changed since, nothing goes out and the card says so. An
+agent edit to the draft cancels its pending send; a denial is final. The agent
+waits up to five minutes for your answer, then checks back with
+`request_status`. Agents cannot send from the Outbox (`send`, `outbox_retry`).
+This holds even for an agent running with permissions bypassed.
+
+**Assistant panel.** Press ⌘J (View › Toggle Assistant, or the bot button) to
+open a conversation beside your mail. It runs over the Agent Client Protocol
+through Sheprd's `herdr-acp`, as Sheprd's own chats do: one persistent session
+per conversation, which outlives the app and reattaches at the next launch.
+Pick the agent (Claude, Codex, OpenCode, pi, Gemini, Copilot: whatever
+`herdr-acp agents` lists) and its model in the panel's header. Each message
+starts with what you are looking at (the selected and checked messages, the
+folder and the search). When the agent wants to use a tool that writes, the
+panel shows the question with the agent's options (Allow, Always allow,
+Reject). The list button shows the activity log. The panel is Moonframe's
+`agent-chat` component: folded tool runs, a composer that sends on Enter and
+recalls earlier prompts, `/` commands, the queue, and mode, model and effort
+pickers. `herdr-acp` is found on PATH or inside Sheprd.app; set `program` in
+`app/providers/chat/provider.toml` to use another.
+
+**The agent folder.** The agent works in `<archive>/agent/`, rewritten at each
+launch (or by `moonmail agent setup`):
+
+| File | For |
+| --- | --- |
+| `AGENTS.md`, `CLAUDE.md` | How to work, and every tool, from the tool table |
+| `moonmail` | The CLI bound to this archive |
+| `.mcp.json`, `.claude/settings.json` | Claude Code: the MCP server; read tools allowed, write tools ask |
+| `opencode.json` | OpenCode's MCP server |
+| `.gemini/settings.json` | Gemini CLI's MCP server (it asks before each call) |
+| `.codex/config.toml` | Codex's MCP server, once Codex trusts the folder |
+
+pi has no MCP client; it reads `AGENTS.md` and runs `./moonmail agent` in its
+shell.
+
+**Tools.** `moonmail agent help` lists them; `moonmail agent tools` prints
+their JSON Schemas. Highlights:
+
+- Mail: `search`, `message`, `thread`, `correspondence`, `set_flag`,
+  `set_keyword`, `move`, `copy`, `mark_thread`.
+- Organizing: `rules`, `rule_preview`, `rule_save`, `rule_apply`,
+  `rule_delete`, `save_search`, folder create, rename and delete.
+- Writing: `create_draft` (new, reply or forward; opens in the composer),
+  `update_draft`, `send_draft` (waits for your Send), `delete_draft`, `outbox`, `request_status`.
+- The window: `show_message`, `show_search`, `open_draft`, `sync`,
+  `app_state` (what the window shows) and `app_action`, which does what a
+  click does with any of the window's actions (`compose`, `draft`, `queue`,
+  `folder`, `filter`, `layout`, `rule_save`, `settings_save`...).
+- Accounts: `accounts`, `add_account` (browser sign-in).
+
+**Agent CLI.** `moonmail agent TOOL --param value` prints one JSON document. It
+runs beside the open app without its lock, as a second SQLite client using the
+same store methods as the UI.
+
+```sh
+moonmail agent search --query 'from:clara is:unread' --limit 5
+moonmail agent create_draft --reply-to 42 --body 'Thursday works.'
+moonmail agent update_draft --id DRAFT --append 'See you then.'
+moonmail agent send_draft --id DRAFT
+moonmail agent app_action --action filter --args '{"value":"unread"}'
+moonmail agent activity
+```
+
+**MCP for outside agents.** `moonmail mcp` serves the same tools over stdio
+(JSON-RPC, MCP 2024-11-05 through 2025-06-18). Tools that only look carry
+`readOnlyHint`; clients ask before the others.
+
+```sh
+claude mcp add moonmail -- moonmail mcp           # Claude Code
+moonmail agent setup                              # prints the server command
+```
+
+For OpenCode, add the server to `opencode.json`:
+`"mcp": { "moonmail": { "type": "local", "command": ["moonmail", "mcp"] } }`.
+
+**Log and live updates.** Every tool call is logged in the archive's
+`activity` table with its source (`cli` or `mcp`), tool, whether it writes,
+and its outcome; see the panel's log or `moonmail agent activity`. The app
+polls SQLite's `PRAGMA data_version` on its 250 ms tick, which moves only when
+another connection commits. On a change it refreshes the list, reader and open
+composer. A new write shows `Agent: …` in the status bar, starts syncing added
+accounts, and uploads queued flag, keyword and move changes. Window tools
+(`show_*`, `open_draft`, `sync`, `app_state`, `app_action`) are requests in
+`agent_requests` that the open app answers within a tick; without the app
+they fail after 10 seconds.
+
+**Limits.**
+- Asking before writes other than sending is the agent's job. Moonmail marks
+  the tools and configures Claude Code to ask, but an agent run with
+  permissions bypassed changes mail without asking. pi asks for nothing.
+- Search reads the index the app last built; mail that arrived while the app
+  was closed is searchable after the app or `moonmail sync` indexes it.
+- A log entry is written after its call finishes, not in the same transaction.
+- While you type in a draft the agent is also editing, the last save wins.
+- `add_account` supports browser (OAuth) sign-in only; password servers are
+  set up in Settings or with `moonmail password`.
+
 ## See a msgvault archive
 
 Moonmail finds a [msgvault](https://github.com/wesm/msgvault) archive the way
