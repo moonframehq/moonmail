@@ -360,6 +360,12 @@ impl Mail {
             "discovery":self.discovery,"discovering":self.discovery_job.is_some(),"discovery_error":self.discovery_error,
         });
         snapshot["account"] = json!(self.query.account);
+        snapshot["msgvault_accounts"] =
+            json!(archive
+            .msgvault_accounts()?
+            .into_iter()
+            .map(|account| json!({"account":account.account,"importing":account.backfill != 0}))
+            .collect::<Vec<_>>());
         snapshot["outbox_more"] = json!(outbox.next.is_some());
         self.sender_snapshot(&mut snapshot)?;
         if let Some(rows) = snapshot["drafts"]["rows"].as_array_mut() {
@@ -1094,6 +1100,24 @@ impl Mail {
                 let path = PathBuf::from(paths[0].as_str().context("Invalid Maildir path")?);
                 self.launch(move |root, _| crate::live_maildir::attach(&root, &path))?;
                 self.status = "Connecting live Maildir…".into();
+            },
+            "msgvault_remove" => {
+                let account = text("account");
+                self.launch(move |root, _| {
+                    Archive::open(&root)?.remove_msgvault(&account)?;
+                    Ok(())
+                })?;
+                self.status = "Removing msgvault account…".into();
+            },
+            "msgvault_restore" => {
+                self.launch(move |root, _| {
+                    Archive::open(&root)?.forget_removed_msgvault()?;
+                    let database = crate::msgvault::locate()
+                        .context("No msgvault archive found in $MSGVAULT_HOME or ~/.msgvault")?;
+                    crate::msgvault::detect(&root, &database)?;
+                    Ok(())
+                })?;
+                self.status = "Looking for msgvault accounts…".into();
             },
             "mail_import" => {
                 let Some(Data::List(paths)) = message.get("paths") else {

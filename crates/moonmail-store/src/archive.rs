@@ -77,7 +77,7 @@ impl Archive {
             transaction.pragma_query_value(None, "user_version", |row| row.get(0))?;
         match version {
             0 => transaction.execute_batch(include_str!("schema.sql"))?,
-            1..=26 => {},
+            1..=27 => {},
             version => return Err(Error::Schema(version)),
         }
         if version < 2 {
@@ -172,6 +172,21 @@ impl Archive {
         }
         if version < 26 {
             transaction.execute_batch(include_str!("msgvault.sql"))?;
+        }
+        if version < 27 {
+            // -1: newest-first import not started; 0: complete; otherwise the
+            // lowest msgvault ID mirrored. Rows mirrored oldest-first are complete.
+            let has_backfill: bool = transaction.query_row(
+                "SELECT EXISTS(SELECT 1 FROM pragma_table_info('msgvault_accounts') WHERE name='backfill')",
+                [],
+                |row| row.get(0),
+            )?;
+            if !has_backfill {
+                transaction.execute_batch(
+                    "ALTER TABLE msgvault_accounts ADD COLUMN backfill INTEGER NOT NULL DEFAULT 0;",
+                )?;
+            }
+            transaction.execute_batch(include_str!("msgvault_backfill.sql"))?;
         }
         transaction.commit()?;
         connection.execute_batch(
