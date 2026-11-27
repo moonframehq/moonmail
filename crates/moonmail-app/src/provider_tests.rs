@@ -69,6 +69,21 @@ fn populated_ui_actions_reader_search_draft_and_all_panes() -> Result<()> {
         "{:?}",
         workspace.problems()
     );
+    // Exercise the Luau branch for a live hosted view as well as the browser.
+    let mut native = mail.snapshot()?;
+    native["preferences"]["reader_renderer"] = json!("native");
+    workspace.set_host("mail", data(native));
+    let shell = workspace.shell();
+    let diagnostics = shell.view_diagnostics("shell");
+    assert!(diagnostics.is_empty(), "{diagnostics:?}");
+    assert!(
+        format!(
+            "{:?}",
+            shell.view().context("No shell view")?.snapshot().tree
+        )
+        .contains("mail-reader")
+    );
+    workspace.set_host("mail", data(mail.snapshot()?));
     mail.handle(data(json!({"action":"threaded"})))?;
     assert_eq!(mail.page.rows.len(), 24);
     let root = mail.page.rows[0].id;

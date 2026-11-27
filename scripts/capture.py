@@ -15,6 +15,7 @@ import sqlite3
 import subprocess
 import struct
 import tempfile
+import time
 import zlib
 
 
@@ -43,7 +44,8 @@ def main():
     output = args.output.resolve()
     output.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="moonmail-capture-") as directory:
-        root = Path(directory)
+        sources = Path(directory)
+        root = sources / "archive"
         env = dict(os.environ, MOONMAIL_DEMO="1", MOONMAIL_DATA_DIR=str(root),
                    XDG_CONFIG_HOME=str(root / "config"), XDG_CACHE_HOME=str(root / "cache"),
                    XDG_STATE_HOME=str(root / "state"))
@@ -51,13 +53,13 @@ def main():
         subprocess.run([binary, "seed-demo"], env=env, check=True, timeout=30)
         if args.view == "thread-warning":
             references = " ".join(f"<ancestor-{n}@example.org>" for n in range(300))
-            fixture = root / "thread-warning.eml"
+            fixture = sources / "thread-warning.eml"
             fixture.write_text(f"From: Clara <clara@example.org>\nTo: you@example.com\nSubject: Synthetic long reference chain\nMessage-ID: <long-chain@example.org>\nReferences: {references}\n\nOriginal headers remain complete.\n")
             subprocess.run([binary, "import", fixture], env=env, check=True, timeout=30)
             with sqlite3.connect(root / "archive.sqlite3") as db:
                 db.execute("UPDATE messages SET date=1900000000 WHERE subject='Synthetic long reference chain'")
         if args.view in ("correspondence", "threads", "unread-navigation"):
-            fixtures = root / "related-fixtures"
+            fixtures = sources / "related-fixtures"
             fixtures.mkdir()
             for number in range(125 if args.view == "correspondence" else 237):
                 (fixtures / f"{number}.eml").write_text(f"From: Clara <clara@example.org>\nTo: you@example.com\nSubject: Synthetic history {number:03d}\nMessage-ID: <history-{number}@example.org>\nReferences: <history-root@example.org>\n\nSynthetic correspondence paging fixture.\n")
@@ -72,7 +74,7 @@ def main():
                 return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data))
             pixels = b"".join(b"\0" + bytes((50, 120, 210)) * 160 for _ in range(80))
             png = b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", 160, 80, 8, 2, 0, 0, 0)) + chunk(b"IDAT", zlib.compress(pixels)) + chunk(b"IEND", b"")
-            fixture = root / "reader.eml"
+            fixture = sources / "reader.eml"
             fixture.write_text('From: Clara <clara@example.org>\nTo: you@example.com\nSubject: Synthetic reader resources\nMIME-Version: 1.0\nContent-Type: multipart/related; boundary=reader\n\n--reader\nContent-Type: text/html; charset=utf-8\n\n<h2>Review notes</h2><p>See <a href="https://example.org/design">the design notes</a> and <a href="https://example.net/review?week=44&amp;view=summary">review summary</a>.</p><img src="cid:preview@example.org" alt="Synthetic blue preview"><img src="https://tracker.example/pixel">\n--reader\nContent-Type: image/png\nContent-ID: <preview@example.org>\nContent-Transfer-Encoding: base64\n\n' + base64.b64encode(png).decode() + '\n--reader--\n')
             subprocess.run([binary, "import", fixture], env=env, check=True, timeout=30)
             with sqlite3.connect(root / "archive.sqlite3") as db:
@@ -199,8 +201,6 @@ def main():
                 reader = root / f"capture-{kind}.html"
                 if reader.exists():
                     shutil.copyfile(reader, output.with_suffix(f".{kind}.html"))
-        if args.view == "images":
-            source = source.replace('rich = false', 'rich = true', 1)
         (overlay / "main.luau").write_text(source.replace(marker, f'pane = "{pane}", rich =', 1) if marker else source)
         if args.view == "feedback":
             metadata = json.loads(subprocess.check_output(
@@ -215,7 +215,25 @@ def main():
             mod.mkdir(parents=True)
             (mod / "main.luau").write_text(feedback.replace(initial, "\t\t\topen = true,", 1))
         env["MOONFRAME_CAPTURE"] = str(output)
-        subprocess.run([binary, "--user", overlay], env=env, check=True, timeout=60)
+        # The capture window can exit while its history subprocess is still
+        # writing the temporary Git store. Let that process finish before cleanup.
+        with subprocess.Popen([binary, "--user", overlay], env=env, start_new_session=True) as app:
+            try:
+                status = app.wait(timeout=60)
+            except subprocess.TimeoutExpired:
+                app.kill()
+                raise
+            if status:
+                raise subprocess.CalledProcessError(status, app.args)
+            deadline = time.monotonic() + 60
+            while True:
+                try:
+                    os.killpg(app.pid, 0)
+                except ProcessLookupError:
+                    break
+                if time.monotonic() >= deadline:
+                    raise TimeoutError("Capture helpers did not finish")
+                time.sleep(0.1)
     if not output.is_file():
         raise RuntimeError("No capture produced; build with --features capture")
     print(f"GPUI layout capture: {output} (native WebKit surface excluded)")

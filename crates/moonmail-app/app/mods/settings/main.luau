@@ -24,12 +24,12 @@ local function choose_provider(state, provider, account)
 	if provider == "microsoft" and not editing then state.server_config.smtp_host = microsoft_smtp(state.email) end
 end
 
-local DEFAULTS = { interface_family = ".AppleSystemUIFont", list_family = "JetBrains Mono", font_size = "12", reader_family = "Helvetica", reader_size = "12", threaded = false, mark_read = true, sync_minutes = "15", app_icon = "wax-seal", layout = "mail" }
+local DEFAULTS = { interface_family = ".AppleSystemUIFont", list_family = "JetBrains Mono", font_size = "12", reader_family = "Helvetica", reader_size = "12", reader_renderer = "webkit", load_remote_images = false, threaded = false, mark_read = true, sync_minutes = "15", app_icon = "wax-seal", layout = "mail" }
 local PAGES = { { "appearance", "Appearance", "palette", "#8b5cf6" }, { "fonts", "Fonts", "case-sensitive", "#f28b35" }, { "reading", "Reading & Lists", "list-tree", "#3894ef" }, { "sync", "Synchronization", "refresh-cw", "#3894ef" }, { "account", "Internet Accounts", "at-sign", "#3478f6" }, { "storage", "Storage", "archive", "#8b929b" } }
 local function values(p)
 	p = p or {}
 	return { interface_family = p.interface_family or DEFAULTS.interface_family, list_family = p.list_family or DEFAULTS.list_family,
-		font_size = tostring(p.font_size or 12), reader_family = (p.reader or {}).family or "Helvetica", reader_size = tostring((p.reader or {}).size or 12), threaded = p.threaded == true, mark_read = p.mark_read ~= false, sync_minutes = tostring(p.sync_minutes or 15), app_icon = p.app_icon or DEFAULTS.app_icon, layout = p.layout or DEFAULTS.layout }
+		font_size = tostring(p.font_size or 12), reader_family = (p.reader or {}).family or "Helvetica", reader_size = tostring((p.reader or {}).size or 12), reader_renderer = p.reader_renderer or DEFAULTS.reader_renderer, load_remote_images = p.load_remote_images == true, threaded = p.threaded == true, mark_read = p.mark_read ~= false, sync_minutes = tostring(p.sync_minutes or 15), app_icon = p.app_icon or DEFAULTS.app_icon, layout = p.layout or DEFAULTS.layout }
 end
 local function preview(state)
 	local size = if state.font_target == "reader_family" then state.values.reader_size else state.values.font_size
@@ -228,6 +228,13 @@ return mod {
 		elseif state.page == "reading" then
 			content = page(
 				group(
+					row("Message renderer", "Native uses GPUI. WebKit preserves more of the sender’s layout.", ui.row { gap = "small",
+						ui.button { label = "Native", small = true, variant = if v.reader_renderer == "native" then "primary" else nil, msg = { field = "reader_renderer", value = "native" } },
+						ui.button { label = "WebKit", small = true, variant = if v.reader_renderer == "webkit" then "primary" else nil, msg = { field = "reader_renderer", value = "webkit" } },
+					}),
+					hairline(),
+					row("Automatically load remote images", "For every email you open. Senders can learn when you read a message and see your IP address.", switch(v.load_remote_images, { toggle = "load_remote_images" })),
+					hairline(),
 					row("Group messages into threads", "Expand a conversation using its disclosure arrow.", switch(v.threaded, { toggle = "threaded" })),
 					hairline(),
 					row("Mark messages as read", "When you open a message in the reader.", switch(v.mark_read, { toggle = "mark_read" }))

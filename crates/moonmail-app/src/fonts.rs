@@ -44,6 +44,8 @@ pub struct Preferences {
     pub list_family: String,
     pub font_size: u16,
     pub reader: ReaderFont,
+    pub reader_renderer: crate::reader_backend::Renderer,
+    pub load_remote_images: bool,
     pub threaded: bool,
     pub mark_read: bool,
     /// Zero is manual; automatic synchronization only runs while the app is open.
@@ -61,6 +63,8 @@ impl Default for Preferences {
             list_family: "JetBrains Mono".into(),
             font_size: 12,
             reader: ReaderFont::default(),
+            reader_renderer: Default::default(),
+            load_remote_images: false,
             threaded: false,
             mark_read: true,
             sync_minutes: 15,

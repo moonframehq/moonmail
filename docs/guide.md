@@ -152,6 +152,14 @@ interface, and **Helvetica 12** for the reader. The interface and lists share a
 size; the reader has its own. Changes apply live. Threaded-list and mark-as-read
 preferences are saved too. System/Light/Dark appearance uses Moonframe's setting.
 
+**Settings → Reading & Lists → Message renderer** changes the open message immediately.
+The choice is stored as `"reader_renderer": "native"` or `"reader_renderer": "webkit"`
+in the archive’s `preferences.json`. Existing and new profiles default to WebKit.
+Native draws selectable text, headings, table rows and styled boxes directly in GPUI.
+It keeps the selected message in memory. Complex layouts can differ from WebKit,
+and oversized or deeply nested documents fall back to text. Both renderers block
+remote resources. **Embedded images** explicitly loads local raster attachments.
+
 **Settings → Reading & Lists → Message columns** controls main-list column order,
 visibility, and widths. From, Date, and To can be hidden; Subject stays visible
 and fills the remaining space. To displays recipients without sorting. Fixed
@@ -705,8 +713,19 @@ live views; original bytes remain in the archive.
   yet. Outgoing files use `application/octet-stream`; servers may impose lower
   message limits. Removing/discarding files leaves unreferenced local blobs;
   garbage collection is not implemented yet.
-- HTML is sanitized with Ammonia and restrictive CSP. Scripts, forms, navigation,
-  and remote images are blocked. **Links…** lists explicit HTTP(S) targets for
+- The reader opens the formatted alternative when available and falls back to plain text.
+  Local stylesheet rules and inline styles preserve headings, table colors, card borders,
+  shadows and padding. Stylesheet matching is limited to messages up to 256 KiB of HTML.
+  Larger messages still use inline styles. External stylesheets are disabled.
+  Both backends sanitize HTML with Ammonia. WebKit also enforces a restrictive CSP. Scripts, forms, navigation,
+  and external stylesheets are blocked. Remote images are off by default.
+  **Load images** allows downloads for the selected email until you leave it.
+  **Settings → Reading & Lists → Automatically load remote images** applies to each
+  email you open. Fetching an image can reveal your IP address and read time to the sender.
+  Both renderers receive locally decoded PNGs. Downloads use public HTTP(S) image
+  sources on standard ports, omit cookies and referrers, and skip private networks.
+  Moonmail checks the first 512 KiB of HTML for up to 16 distinct image sources.
+  **Links…** lists explicit HTTP(S) targets for
   opening in the system browser (100 links, first 512 KiB per alternative).
   **Embedded images** decodes local CID PNG/JPEG/GIF/WebP to static PNG; duplicate
   or missing CIDs are not guessed. Limits: 16 images, 2 MiB per input/output,
@@ -759,11 +778,31 @@ pinned stable compiler.
 just format
 just ci                    # rustfmt/Taplo, Clippy, workspace tests
 just bench-check           # exercise all workloads once; no timing claims
+just bench-reader          # native GPUI vs WebKit, macOS
 just bench                 # Criterion comparisons
 just bench mime-owned
 just bench index-batch
 just bench search-warm
 ```
+
+The macOS reader benchmark selects messages from a temporary SQLite archive. It
+uses a 720 × 480 point reader, real GPUI text shaping and offscreen GPU drawing,
+and a persistent offscreen WKWebView. Each sample adds provider selection time
+to the time to obtain a rendered snapshot. It excludes application launch, Luau
+event delivery, display refresh, benchmark IPC and PNG encoding. It times
+one warm-up round and 20 measured rounds per backend and message, alternating
+backend order. The app crate is optimized at level 3 using the development
+profile. Raw microsecond samples and synthetic screenshots are written under
+`target/reader-bench/`. A loopback listener checks for unexpected image requests.
+
+Warm timings pooled across three runs on an Apple M1 Ultra (macOS 27.0.1),
+60 samples per cell, in milliseconds:
+
+| Synthetic message | Native p50 / p95 | WebKit p50 / p95 |
+| --- | ---: | ---: |
+| Plain text | 5.42 / 10.69 | 7.95 / 42.01 |
+| Styled receipt | 6.16 / 10.73 | 10.40 / 27.23 |
+| 60-section newsletter | 11.24 / 19.36 | 10.24 / 57.60 |
 
 For visual layout checks on macOS, use `just screenshot` or
 `just screenshot target/screenshots/compose.png compose` (also `settings`,

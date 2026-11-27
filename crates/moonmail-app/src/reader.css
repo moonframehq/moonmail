@@ -1,0 +1,57 @@
+:root {
+    color-scheme: light dark;
+    color: #202124;
+    background: #fff;
+}
+body {
+    max-width: 76ch;
+    margin: 0 auto;
+    padding: clamp(14px, 3vw, 32px);
+    line-height: 1.55;
+    overflow-wrap: anywhere;
+}
+/* Branded messages provide their own full-width canvas and inner column. */
+body:has(table[width="100%"]) { max-width: none; padding: 0; }
+table, td, th, a { box-sizing: border-box; }
+h1, h2, h3, h4 {
+    line-height: 1.2;
+    margin: .9em 0 .4em;
+}
+body > :first-child { margin-top: 0; }
+p { margin: 0 0 .85em; }
+pre { white-space: pre-wrap; font: inherit; margin: 0; }
+table, img { max-width: 100%; }
+td, th { overflow-wrap: anywhere; }
+img[src] { height: auto; }
+img:not([src]) {
+    width: auto;
+    height: auto;
+    font-size: .9rem;
+    color: #626970;
+}
+img:not([src]):not([alt]), img:not([src])[alt=""] { display: none; }
+blockquote {
+    border-inline-start: 3px solid #b9c4ce;
+    margin: 1em 0;
+    padding-inline-start: 1em;
+    color: #555e66;
+}
+@media (prefers-color-scheme: dark) {
+    :root { color: #ededed; background: #202020; }
+    blockquote, img:not([src]) { color: #bac2c9; }
+    body:has([bgcolor], [style*="background-color:"]) {
+        color-scheme: only light;
+        background: #fff;
+        color: #202124;
+    }
+}
+@media (max-width: 740px) {
+    /* Bound nested layout tables to the pane even when their authored width is fixed. */
+    table[width="100%"] { table-layout: fixed; }
+    table[width]:not([width$="%"]) { table-layout: fixed; width: 100% !important; }
+}
+@media (max-width: 480px) {
+    td[style*="padding:"], th[style*="padding:"] {
+        padding-inline: min(4vw, 16px) !important;
+    }
+}
