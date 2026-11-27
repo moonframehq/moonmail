@@ -14,10 +14,15 @@ pub(crate) const SUMMARY: &str =
     EXISTS(SELECT 1 FROM occurrences o WHERE o.message_id=m.id AND flagged=1),1 FROM messages m";
 const LIVE: &str = "EXISTS(SELECT 1 FROM occurrences o WHERE o.message_id=m.id)";
 /// In views across accounts, show a message once: drop a msgvault mirror's
-/// copy when another account holds a live message with the same Message-ID.
+/// copy when another account holds a live copy of the same message. The
+/// sender chooses the Message-ID, so sender, subject and body text must match
+/// too; a different message reusing a Message-ID cannot hide another.
 const HIDE_MIRRORED: &str = "NOT (m.rfc_id IS NOT NULL
     AND m.account IN (SELECT account FROM msgvault_accounts)
-    AND EXISTS(SELECT 1 FROM messages d WHERE d.rfc_id=m.rfc_id
+    AND EXISTS(SELECT 1 FROM messages d
+        JOIN bodies db ON db.message_id=d.id JOIN bodies mb ON mb.message_id=m.id
+        WHERE d.rfc_id=m.rfc_id AND d.address=m.address AND d.subject=m.subject
+        AND db.text=mb.text
         AND d.account NOT IN (SELECT account FROM msgvault_accounts)
         AND EXISTS(SELECT 1 FROM occurrences o WHERE o.message_id=d.id)))";
 
