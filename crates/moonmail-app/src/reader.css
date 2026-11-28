@@ -29,7 +29,8 @@ img:not([src]) {
     font-size: .9rem;
     color: #626970;
 }
-img:not([src]):not([alt]), img:not([src])[alt=""] { display: none; }
+/* Sender inline display rules can expand a blocked 1×1 pixel to the pane width. */
+img:not([src]):not([alt]), img:not([src])[alt=""] { display: none !important; }
 blockquote {
     border-inline-start: 3px solid #b9c4ce;
     margin: 1em 0;
