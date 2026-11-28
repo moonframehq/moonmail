@@ -61,7 +61,9 @@ ASSISTANT_CHAT = {
             {"type": "user", "key": "e5", "text": "Reply to Clara that Thursday works, and send it", "context": True},
             {"type": "tools", "key": "e6", "title": "Drafted a reply, asked to send it", "status": "running", "live": True,
              "count": 2, "failed": 0, "more": 0, "current": "send_draft", "files": [], "items": [
-                {"type": "tool", "id": "d", "kind": "edit", "title": "create_draft", "status": "done", "steps": 0, "files": []},
+                {"type": "tool", "id": "d", "kind": "edit", "title": "create_draft", "status": "done", "steps": 0, "files": [],
+                 "detail": json.dumps({"to": "clara@example.org", "subject": "Thursday design review",
+                                       "body": "Thursday works. I will bring my notes and the revised proposal to the meeting."})},
                 {"type": "tool", "id": "e", "kind": "other", "title": "send_draft", "status": "running", "steps": 0, "files": []}]},
         ],
     },

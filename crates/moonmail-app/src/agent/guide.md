@@ -23,7 +23,11 @@ included, is logged where the user can see it.
 
 - Each request may start with `[Moonmail: ...]`: what the user is looking at
   (the selected message, checked messages, folder, search). "This", "it" and
-  "these" mean those.
+  "these" mean those. For past exchanges, use `correspondence` with the
+  pinned anchor ID. In Reply Thread mode, use `thread` for replies. To read
+  exactly what the pane lists, use `app_state` and look at `app.related`.
+  Its anchor stays pinned when the reader opens another row. Use `message`
+  with a row's ID for the text.
 - Read before you act: search with a small `limit`, open a message's text only
   when you need it. `app_state` tells what the window shows.
 - Write email the way the user would: `create_draft` opens it in the composer,

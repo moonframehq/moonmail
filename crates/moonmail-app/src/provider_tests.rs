@@ -91,6 +91,12 @@ fn assistant_sends_only_changed_mail_context() -> Result<()> {
     workspace.set_host("chat", data(service.clone()));
     assert_eq!(submit(&mut workspace)?, None);
 
+    mail["related"] = json!({"anchor":{"id":17}});
+    workspace.set_host("mail", data(mail.clone()));
+    let pinned = submit(&mut workspace)?.context("Missing pinned correspondence")?;
+    assert!(pinned.starts_with("Mail view: correspondence pane pinned to message 17 "));
+    assert!(!pinned.contains("Open email:"));
+    mail["related"] = Value::Null;
     mail["search"] = json!("flagged");
     workspace.set_host("mail", data(mail.clone()));
     assert_eq!(

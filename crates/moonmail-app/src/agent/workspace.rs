@@ -13,6 +13,10 @@ use {
 
 const GUIDE: &str = include_str!("guide.md");
 
+pub(crate) fn instructions() -> String {
+    GUIDE.replace("{TOOLS}", &tool_list())
+}
+
 pub fn prepare(root: &Path, demo: bool) -> Result<PathBuf> {
     let dir = root.join("agent");
     std::fs::create_dir_all(&dir)?;
@@ -32,7 +36,7 @@ pub fn prepare(root: &Path, demo: bool) -> Result<PathBuf> {
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(&command, std::fs::Permissions::from_mode(0o700))?;
     }
-    let guide = GUIDE.replace("{TOOLS}", &tool_list());
+    let guide = instructions();
     for name in ["AGENTS.md", "CLAUDE.md"] {
         write_if_changed(&dir.join(name), &guide)?;
     }
@@ -137,6 +141,8 @@ mod tests {
             std::fs::read_to_string(agent.join("CLAUDE.md"))?.contains("./moonmail agent TOOL")
         );
         let guide = std::fs::read_to_string(agent.join("CLAUDE.md"))?;
+        assert_eq!(guide, instructions());
+        assert_eq!(guide, std::fs::read_to_string(agent.join("AGENTS.md"))?);
         assert!(guide.contains("- `send_draft` (**writes**)") && !guide.contains("{TOOLS}"));
         let claude: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(
             agent.join(".claude/settings.json"),

@@ -557,6 +557,11 @@ you first, through the agent's own permission prompt. Sending is held by
 Moonmail itself, whatever the agent does: every call, reads included, is
 logged.
 
+Choose **Prompt** in the Assistant header to
+read Moonmail’s workspace instructions and preview the mail context for your
+next message. Choose **Back to chat** to return to the conversation. Each agent
+can also supply its own internal instructions.
+
 **Sending needs your click.** `send_draft` (and `app_action` with `queue`)
 never send. They put a card in the assistant panel showing From, To, Cc, Bcc,
 attachments, subject and body, with **Review**, **Deny** and **Send**. The
@@ -568,18 +573,30 @@ waits up to five minutes for your answer, then checks back with
 This holds even for an agent running with permissions bypassed.
 
 **Assistant panel.** Press ⌘J (View › Toggle Assistant, or the bot button) to
-open a conversation beside your mail. It runs over the Agent Client Protocol
+open a conversation beside your mail. Use **A−** or **A+** in the Assistant
+header to resize the current conversation as you read. Moonmail remembers
+the size for future chats. It runs over the Agent Client Protocol
 through Sheprd's `herdr-acp`, as Sheprd's own chats do: one persistent session
 per conversation, which outlives the app and reattaches at the next launch.
 Pick the agent (Claude, Codex, OpenCode, pi, Gemini, Copilot: whatever
 `herdr-acp agents` lists) and its model in the panel's header. The first prompt
 includes the open email’s ID, subject and sender, plus the folder, checked
-messages and search. Follow-ups include the open email or
-mail view when it changes. Clearing the selection tells the assistant that no
-email is open. If the earlier context is missing from the recent transcript,
-Moonmail includes it again. When the agent wants to use a tool that writes, the
+messages, search and pinned Correspondence or Reply Thread anchor. Follow-ups
+include the open email or mail view when it changes. Clearing the selection
+tells the assistant that no email is open. If the earlier context is missing
+from the recent transcript, Moonmail includes it again.
+
+The assistant can read earlier exchanges with `correspondence`. The MCP tool
+`app_state` returns the pane's pinned message, current rows in display order
+and whether another page is available under `app.related`. Each row has an ID
+the assistant can pass to `message` to read its text. When the agent wants to
+use a tool that writes, the
 panel shows the question with the agent's options (Allow, Always allow,
-Reject). The list button shows the activity log. The panel is Moonframe's
+Reject). Open a tool run to see its results. Each muted preview wraps to three
+lines. Click it to read the original text, and click again to collapse it.
+Long results have Previous and Next buttons.
+
+The list button shows the activity log. The panel is Moonframe's
 `agent-chat` component: folded tool runs, a composer that sends on Enter and
 recalls earlier prompts, `/` commands, the queue, and mode, model and effort
 pickers. `herdr-acp` is found on PATH or inside Sheprd.app; set `program` in

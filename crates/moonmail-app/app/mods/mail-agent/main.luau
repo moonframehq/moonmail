@@ -9,6 +9,8 @@
 
 local agent_chat = use "agent-chat"
 
+local MIN_TEXT_SIZE, DEFAULT_TEXT_SIZE, MAX_TEXT_SIZE = 10, 16, 32
+
 local SUGGESTIONS = {
 	"Summarize my unread mail",
 	"What needs a reply from me?",
@@ -28,6 +30,10 @@ local function mail_view(mail)
 	end
 	table.sort(checked)
 	local parts = {}
+	if mail.related and mail.related.anchor then
+		local tool = if mail.related_thread then "thread" else "correspondence"
+		table.insert(parts, `{tool} pane pinned to message {mail.related.anchor.id} (use {tool} with this ID for history, or app_state for the displayed page)`)
+	end
 	if #checked > 0 then table.insert(parts, "checked messages " .. table.concat(checked, ", ")) end
 	for _, mailbox in mail.mailboxes or {} do
 		if mailbox.id == mail.mailbox then
@@ -141,6 +147,15 @@ local function activity_view(activity)
 	return ui.column { gap = "small", table.unpack(rows) }
 end
 
+local function prompt_view(next_context, guide)
+	return ui.column { grow = true, scroll = true, padding = "large", gap = "small",
+		ui.text { "Context for the next message", weight = "semibold" },
+		ui.text { next_context or "Mail context is unchanged.", wrap = true },
+		ui.text { "Moonmail workspace instructions", weight = "semibold" },
+		ui.markdown { text = guide or "Loading instructions…" },
+	}
+end
+
 return mod {
 	title = "Assistant",
 	styles = {
@@ -155,6 +170,7 @@ return mod {
 	init = function(previous)
 		local state = previous or {}
 		if type(state.generation) ~= "number" then state.generation = 1 end
+		state.text_size = math.clamp(tonumber(state.text_size) or DEFAULT_TEXT_SIZE, MIN_TEXT_SIZE, MAX_TEXT_SIZE)
 		return state
 	end,
 
@@ -163,9 +179,18 @@ return mod {
 			-- A new component instance starts a new chat on its first prompt.
 			state.chat = nil
 			state.generation += 1
-			state.log = false
-		elseif msg == "log" then
-			state.log = not state.log
+			state.page = nil
+		elseif msg == "larger" then
+			state.text_size = math.min(MAX_TEXT_SIZE, state.text_size + 1)
+		elseif msg == "smaller" then
+			state.text_size = math.max(MIN_TEXT_SIZE, state.text_size - 1)
+		elseif msg == "log" or msg == "prompt" then
+			state.page = if state.page == msg then nil else msg
+			if state.page == "prompt" then
+				return state, { { to = "provider:mail", msg = "agent_instructions" } }
+			end
+		elseif type(msg) == "table" and type(msg.instructions) == "string" then
+			state.instructions = msg.instructions
 		elseif type(msg) == "table" and msg.msg == "chat-started" then
 			state.chat = msg.chat
 		elseif type(msg) == "table" and msg.msg == "link" and type(msg.url) == "string" then
@@ -180,8 +205,11 @@ return mod {
 		for _, ask in (mail.agent and mail.agent.approvals) or {} do
 			table.insert(approvals, approval_view(ask))
 		end
+		local next_context = context(mail, app.chat and app.chat.chats, state.chat)
 		local body
-		if state.log then
+		if state.page == "prompt" and mail.agent and mail.agent.dir then
+			body = prompt_view(next_context, state.instructions)
+		elseif state.page == "log" then
 			body = ui.column { grow = true, scroll = true, gap = "small", padding = "large",
 				ui.text { "Every Moonmail tool an agent called, newest first.", class = "agent-hint" },
 				activity_view((mail.agent and mail.agent.activity) or {}),
@@ -195,7 +223,7 @@ return mod {
 				id = `mail-assistant-{state.generation}`,
 				chat = state.chat,
 				cwd = mail.agent.dir,
-				context = context(mail, app.chat and app.chat.chats, state.chat),
+				context = next_context,
 				title = "Ask about your mail",
 				placeholder = "Ask about your mail…",
 				suggestions = SUGGESTIONS,
@@ -206,13 +234,21 @@ return mod {
 		return ui.column { grow = true, gap = "none", class = "agent-panel",
 			ui.row { class = "agent-bar", height = 36, shrink = false, align = "center", gap = "small",
 				ui.icon { name = "bot", size = "small" },
-				ui.text { if state.log then "Agent activity" else "Assistant", weight = "semibold" },
+				ui.text { if state.page == "prompt" then "System prompt" elseif state.page == "log" then "Agent activity" else "Assistant", weight = "semibold" },
 				ui.spacer {},
-				ui.button { icon = "list", small = true, variant = if state.log then "secondary" else "ghost", tooltip = "Agent activity log", msg = "log" },
+				not state.page and ui.button { "A−", small = true, variant = "ghost", tooltip = "Decrease conversation text size", disabled = state.text_size <= MIN_TEXT_SIZE, msg = "smaller" },
+				not state.page and ui.button { "A+", small = true, variant = "ghost", tooltip = "Increase conversation text size", disabled = state.text_size >= MAX_TEXT_SIZE, msg = "larger" },
+				ui.button {
+					if state.page == "prompt" then "Back to chat" else "Prompt",
+					small = true, variant = if state.page == "prompt" then "outline" else "ghost",
+					tooltip = if state.page == "prompt" then "Back to conversation" else "Show system prompt",
+					msg = "prompt",
+				},
+				ui.button { icon = "list", small = true, variant = if state.page == "log" then "outline" else "ghost", tooltip = "Agent activity log", msg = "log" },
 				ui.button { icon = "square-pen", small = true, variant = "ghost", tooltip = "New conversation", msg = "new" },
 			},
 			#approvals > 0 and ui.column { gap = "small", padding = "normal", shrink = false, table.unpack(approvals) },
-			ui.column { grow = true, gap = "none", body },
+			ui.column { grow = true, gap = "none", style = if state.page then nil else { font_size = state.text_size }, body },
 		}
 	end,
 }

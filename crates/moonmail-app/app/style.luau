@@ -20,6 +20,8 @@ return style {
 		["settings-control"] = { light = "#ffffff", dark = "#58585c" },
 	},
 	rules = {
+		-- Keep the composer controls at interface size in the narrow sidebar.
+		[".agent-chat-bottom"] = { size = "normal" },
 		[".compose-window"] = { background = "background" },
 		[".drafts-heading"] = { padding = { 0, 16 }, gap = 10 },
 		[".compose-toolbar"] = { padding = { 0, 18 }, gap = 8, background = "chrome", border = "bottom", border_color = "border" },

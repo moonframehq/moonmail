@@ -304,10 +304,7 @@ impl Mail {
     fn snapshot(&self) -> Result<serde_json::Value> {
         let archive = self.archive()?;
         let outbox = archive.outbox_page(self.outbox_before, 50)?;
-        let related = self
-            .related_query()
-            .map(|query| archive.related_page(&query, 50))
-            .transpose()?;
+        let related = self.related_page()?;
         let mailboxes = archive.mailboxes()?;
         use std::hash::{Hash, Hasher};
         let mut list_hash = std::hash::DefaultHasher::new();
@@ -1200,7 +1197,17 @@ impl Native for Mail {
             .and_then(|()| self.publish(host))
             .map_err(|error| format!("{error:#}"))
     }
-    fn receive(&mut self, host: &Handle, _from: &str, message: Data) {
+    fn receive(&mut self, host: &Handle, from: &str, message: Data) {
+        if message.as_str() == Some("agent_instructions") {
+            host.send(
+                from,
+                Data::map([(
+                    "instructions",
+                    Data::from(crate::agent::workspace::instructions()),
+                )]),
+            );
+            return;
+        }
         self.error.clear();
         let window = self.composer_window_event(&message);
         if let Err(error) = self.handle(message) {
