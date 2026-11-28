@@ -24,6 +24,10 @@ local function context(mail)
 	if selected then
 		table.insert(parts, `selected message {selected.id} “{selected.subject}” from {selected.sender} <{selected.address}>`)
 	end
+	if mail.related and mail.related.anchor then
+		local tool = if mail.related_thread then "thread" else "correspondence"
+		table.insert(parts, `{tool} pane pinned to message {mail.related.anchor.id} (use {tool} with this ID for history, or app_state for the displayed page)`)
+	end
 	local checked = {}
 	for _, row in mail.rows or {} do
 		if row.checked then table.insert(checked, tostring(row.id)) end
