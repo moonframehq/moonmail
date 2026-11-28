@@ -1496,6 +1496,7 @@ fn scramble_masks_rendered_mail_and_restores_the_original_view() -> Result<()> {
             } else {
                 "webkit"
             });
+            snapshot["selected"]["summary"]["address"] = json!("private@hidden.test");
             snapshot["selected"]["summary"]["subject"] = json!("Private selected subject");
             snapshot["rows"][0]["subject"] = json!("Private list subject");
             snapshot["status"] = json!("Private sync status");
@@ -1506,6 +1507,11 @@ fn scramble_masks_rendered_mail_and_restores_the_original_view() -> Result<()> {
                 "{:?}",
                 workspace.problems()
             );
+            let shell = format!("{:?}", workspace.shell().view().context("missing shell")?);
+            assert_eq!(shell.contains("Nela soren,"), enabled);
+            assert_eq!(shell.contains("@example.invalid"), enabled);
+            assert_eq!(shell.contains("private@hidden.test"), !enabled);
+            assert!(!shell.contains("•••"));
             for (slot, secret) in [
                 (workspace.shell(), "Private selected subject"),
                 (

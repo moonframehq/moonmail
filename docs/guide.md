@@ -27,7 +27,8 @@ addresses, tokens, and raw server replies.
 
 For a screenshot, choose **View → Toggle Scramble Mode**. Wait for **Scramble Mode**
 at the bottom of the mail, composer, or settings window, then capture that window.
-Private text appears as dots, and the message body and assistant conversation are hidden.
+Private fields display invented words and sample addresses. The reader shows a
+synthetic message, and the assistant conversation is hidden.
 Choose the same command to resume editing and using the window’s controls.
 Scramble Mode starts off each time you launch Moonmail.
 Development builds on a branch also show Moonframe’s checkout label below the app.

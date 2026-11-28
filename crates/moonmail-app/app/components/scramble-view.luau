@@ -17,11 +17,51 @@ for _, text in {
 	"Save .eml…", "●", "⚑", "✓", "□", "☑",
 } do labels[text] = true end
 
+-- Generate pronounceable stand-ins instead of permuting the source letters.
+-- Only length, position and capitalization influence the generated letters.
+local starts = { "b", "d", "f", "g", "k", "l", "m", "n", "p", "r", "s", "t", "v", "z" }
+local ends = { "a", "e", "i", "o", "u", "an", "el", "in", "or", "us", "en" }
+
+local function word(token, position)
+	local length = math.clamp(utf8.len(token) or #token, 2, 14)
+	local capitalized = string.match(token, "^%u") ~= nil
+	local seed = (length * 8009 + position * 3701 + (if capitalized then 7919 else 0)) % 65521
+	local result = ""
+	while #result < length do
+		result ..= starts[seed % #starts + 1] .. ends[math.floor(seed / #starts) % #ends + 1]
+		seed = (seed * 251 + 17) % 65521
+	end
+	result = string.sub(result, 1, length)
+	if result == string.lower(token) then result ..= "a" end
+	return if capitalized then string.upper(string.sub(result, 1, 1)) .. string.sub(result, 2) else result
+end
+
+local function replace_token(token, position)
+	if string.find(token, "@", 1, true) then
+		local address = word(token, position) .. "@example.invalid"
+		return if string.sub(token, 1, 1) == "<" then "<" .. address .. ">" else address
+	end
+	if string.match(token, "^https?://") then return "https://example.invalid/" .. word(token, position) end
+	if string.match(token, "^[%d:/.,%-]+$") then
+		return (string.gsub(token, "%d+", function(digits)
+			if #digits == 4 then return "2024" end
+			return string.sub(string.rep("123", 5), 1, #digits)
+		end))
+	end
+	local punctuation = string.match(token, "[.,!?;:]$") or ""
+	return word(token, position) .. punctuation
+end
+
 local function mask(value)
 	if type(value) ~= "string" or value == "" then return "" end
 	if labels[value] then return value end
-	-- A bounded, approximate width also covers non-Latin text, URLs and digits.
-	return string.rep("•", math.clamp(utf8.len(value) or #value, 3, 28))
+	-- Bound the work even when a draft or diagnostic is very long. Whitespace
+	-- keeps the shape of multi-line fields without copying any private tokens.
+	local position = 0
+	return (string.gsub(string.sub(value, 1, 512), "%S+", function(token)
+		position += 1
+		return replace_token(token, position)
+	end))
 end
 
 local function scrub(node)
@@ -63,6 +103,13 @@ local function scrub(node)
 		return scrub(if node.open then node.content else node[1])
 	elseif kind == "mount" and node.mod == "mail-agent" then
 		return ui.column { grow = true, padding = "normal", ui.text { "Assistant", weight = "semibold" }, ui.text { "Conversation hidden", tone = "muted" } }
+	elseif (kind == "browser" and node.id == "message-reader") or (kind == "view" and node.name == "mail-reader") then
+		-- Both reader backends show a synthetic sample without loading the mail.
+		return ui.column { grow = true, padding = "large", gap = "normal",
+			ui.text { "Nela soren," },
+			ui.text { "Valen tira monel saviro. Pelen nori valeta, saven lorin taro mira." },
+			ui.text { "Ferin dalo reniva solan. Lora delan vena torin." },
+		}
 	elseif kind == "browser" or kind == "view" then
 		return ui.column { grow = true, padding = "large", ui.text { "Content hidden", tone = "muted" } }
 	else
