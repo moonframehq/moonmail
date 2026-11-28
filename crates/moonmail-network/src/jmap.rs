@@ -27,6 +27,8 @@ pub enum JmapError {
     NotFound,
     #[error("JMAP state expired")]
     StateExpired,
+    #[error("JMAP state changed before the conditional write")]
+    StateMismatch,
     #[error("JMAP server could not confirm the outcome")]
     ServerFailure,
     #[error("JMAP server rejected the operation")]
@@ -91,6 +93,31 @@ pub(crate) fn json_body<T: DeserializeOwned>(response: Response) -> Result<T> {
         16 * 1024 * 1024,
     )?)?)
 }
+fn validate_endpoint(origin: &Url, url: &Url, download: bool) -> Result<()> {
+    let fastmail = origin.origin().ascii_serialization() == "https://api.fastmail.com"
+        && url.scheme() == "https"
+        && url.port().is_none()
+        && url.host_str().is_some_and(|host| {
+            host.ends_with(".api.fastmail.com")
+                || host == "jmap.fastmail.com"
+                || (download
+                    && (host == "www.fastmailusercontent.com"
+                        || host
+                            .strip_suffix("-www.fastmailusercontent.com")
+                            .is_some_and(|region| {
+                                !region.is_empty()
+                                    && region.bytes().all(|c| c.is_ascii_alphanumeric())
+                            })))
+        });
+    if (!fastmail && url.origin() != origin.origin())
+        || !url.username().is_empty()
+        || url.password().is_some()
+    {
+        return Err(JmapError::Protocol);
+    }
+    Ok(())
+}
+
 impl Client {
     pub fn account_id(&self) -> &str {
         &self.account
@@ -199,27 +226,7 @@ impl Client {
             .origin
             .join(&expanded)
             .map_err(|_| JmapError::Protocol)?;
-        let fastmail = self.origin.origin().ascii_serialization() == "https://api.fastmail.com"
-            && url.scheme() == "https"
-            && url.port().is_none()
-            && url.host_str().is_some_and(|host| {
-                host.ends_with(".api.fastmail.com")
-                    || host == "jmap.fastmail.com"
-                    || (!blob.is_empty()
-                        && (host == "www.fastmailusercontent.com"
-                            || host
-                                .strip_suffix("-www.fastmailusercontent.com")
-                                .is_some_and(|region| {
-                                    !region.is_empty()
-                                        && region.bytes().all(|c| c.is_ascii_alphanumeric())
-                                })))
-            });
-        if (!fastmail && url.origin() != self.origin.origin())
-            || !url.username().is_empty()
-            || url.password().is_some()
-        {
-            return Err(JmapError::Protocol);
-        }
+        validate_endpoint(&self.origin, &url, !blob.is_empty())?;
         Ok(url)
     }
     pub(crate) fn send(&self, request: RequestBuilder) -> Result<Response> {
@@ -288,6 +295,7 @@ impl Client {
                 .ok_or(JmapError::Protocol)?;
             if r[0] == "error" {
                 return Err(match field(&r[1], "type")? {
+                    "stateMismatch" => JmapError::StateMismatch,
                     "cannotCalculateChanges" => JmapError::StateExpired,
                     "serverFail" | "serverPartialFail" => JmapError::ServerFailure,
                     _ => JmapError::Rejected,
@@ -310,3 +318,6 @@ impl Client {
         .ok_or(JmapError::Protocol)
     }
 }
+
+#[cfg(test)]
+mod tests;

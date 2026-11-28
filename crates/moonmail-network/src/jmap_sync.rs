@@ -115,6 +115,7 @@ impl Client {
         }
         if archive.mail_edits_pending(account)? {
             self.flush_edits(account, archive, &stop)?;
+            self.flush_deletions(account, archive, &stop)?;
         }
         let mut sync = Sync {
             client: self,

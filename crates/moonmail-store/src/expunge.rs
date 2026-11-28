@@ -29,6 +29,14 @@ impl Archive {
         epoch: u32,
         message: Option<MessageId>,
     ) -> Result<(u32, Option<u32>)> {
+        if epoch == 0 {
+            return Ok(self.connection.query_row(
+                "SELECT coalesce((SELECT revision FROM jmap_deletion_revisions WHERE mailbox=?1),0),
+                 (SELECT uid FROM occurrences WHERE mailbox_id=?1 AND epoch=0 AND message_id=?2)
+                 FROM jmap_folders WHERE mailbox=?1",
+                params![mailbox,message.map(|m|m.0 as i64)], |r|Ok((r.get(0)?,r.get(1)?))
+            )?);
+        }
         Ok(self.connection.query_row(
             "SELECT MAX(
                 COALESCE((SELECT MAX(uid) FROM deletion_inventory WHERE mailbox_id=?1 AND epoch=?2),0),
@@ -51,7 +59,6 @@ impl Archive {
         target: DeletionTarget,
     ) -> Result<usize> {
         if !matches!(role, MailboxRole::Trash | MailboxRole::Junk)
-            || epoch == 0
             || self.role_mailbox(account, role)? != mailbox
         {
             return Err(Error::Invalid("Choose the current Trash or Junk folder"));
@@ -65,6 +72,32 @@ impl Archive {
         )?;
         if !valid {
             return Err(Error::Invalid("Folder changed; reopen confirmation"));
+        }
+        if epoch == 0 {
+            let (folder, revision): (String,u32) = tx.query_row(
+                "SELECT f.remote,coalesce(r.revision,0) FROM jmap_folders f
+                 LEFT JOIN jmap_deletion_revisions r ON r.mailbox=f.mailbox WHERE f.account=?1 AND f.mailbox=?2",
+                params![account,mailbox], |r|Ok((r.get(0)?,r.get(1)?))
+            )?;
+            let message = match target {
+                DeletionTarget::Through(expected) if expected == revision => None,
+                DeletionTarget::Message(message,uid) if tx.query_row(
+                    "SELECT EXISTS(SELECT 1 FROM occurrences WHERE mailbox_id=?1 AND message_id=?2 AND epoch=0 AND uid=?3)",
+                    params![mailbox,message.0 as i64,uid], |r|r.get::<_,bool>(0)
+                )? => Some(message.0 as i64),
+                _ => return Err(Error::Invalid("Folder changed; reopen confirmation")),
+            };
+            let count = tx.execute(
+                "INSERT INTO expunge_operations(account,mailbox,epoch,uid,remote_folder,confirmed_role)
+                 SELECT ?1,?2,0,o.uid,?3,?4 FROM occurrences o JOIN jmap_emails e ON e.account=?1 AND e.uid=o.uid
+                 WHERE o.mailbox_id=?5 AND o.epoch=0 AND (?6 IS NULL OR o.message_id=?6)
+                 ON CONFLICT(account,remote_folder,uid) WHERE epoch=0 DO UPDATE SET state='queued',
+                 mailbox=excluded.mailbox,confirmed_role=excluded.confirmed_role
+                 WHERE state IN ('done','dismissed','stale')",
+                params![account,name,folder,role.as_str(),mailbox,message],
+            )?;
+            tx.commit()?;
+            return Ok(count);
         }
         let count = match target {
             DeletionTarget::Message(id, expected) => {
@@ -96,7 +129,7 @@ impl Archive {
     pub fn remote_operations(&self, account: Option<&str>) -> Result<Vec<RemoteOperation>> {
         let sql = if account.is_some() {
             "SELECT id,account,mailbox,epoch,uid,state,'Delete',NULL,NULL
-             FROM expunge_operations WHERE account=?1 AND state='queued' ORDER BY id LIMIT 100"
+             FROM expunge_operations WHERE account=?1 AND epoch>0 AND state='queued' ORDER BY id LIMIT 100"
         } else {
             "SELECT * FROM (
                  SELECT id,account,mailbox,epoch,uid,state,'Delete',NULL,NULL FROM expunge_operations
@@ -139,8 +172,8 @@ impl Archive {
         let tx = self.connection.transaction()?;
         tx.execute("UPDATE expunge_operations SET state=?2 WHERE id=?1 AND state IN ('unknown','stale','unsupported')",params![id,state])?;
         if state == "done" {
-            tx.execute("DELETE FROM deletion_inventory WHERE (mailbox_id,epoch,uid)=(SELECT m.id,e.epoch,e.uid FROM expunge_operations e JOIN mailboxes m ON m.account=e.account AND m.name=e.mailbox WHERE e.id=?1 AND e.state='done')",[id])?;
-            tx.execute("DELETE FROM occurrences WHERE (mailbox_id,epoch,uid)=(SELECT m.id,e.epoch,e.uid FROM expunge_operations e JOIN mailboxes m ON m.account=e.account AND m.name=e.mailbox WHERE e.id=?1 AND e.state='done')",[id])?;
+            tx.execute("DELETE FROM deletion_inventory WHERE (mailbox_id,epoch,uid)=(SELECT m.id,e.epoch,e.uid FROM expunge_operations e JOIN mailboxes m ON m.account=e.account AND m.name=e.mailbox WHERE e.id=?1 AND e.state='done' AND e.epoch>0)",[id])?;
+            tx.execute("DELETE FROM occurrences WHERE (mailbox_id,epoch,uid)=(SELECT m.id,e.epoch,e.uid FROM expunge_operations e JOIN mailboxes m ON m.account=e.account AND m.name=e.mailbox WHERE e.id=?1 AND e.state='done' AND e.epoch>0)",[id])?;
         }
         if matches!(state, "done" | "dismissed") {
             tx.execute("UPDATE drafts SET pending_remote_delete=0 WHERE id=(SELECT draft_id FROM expunge_operations WHERE id=?1) AND NOT EXISTS(SELECT 1 FROM expunge_operations WHERE draft_id=drafts.id AND state NOT IN ('done','dismissed'))",[id])?;

@@ -543,7 +543,7 @@ return mod {
 			reader = ui.column { class = "form", grow = true,
 				ui.text { "Confirm permanent deletion", class = "title" },
 				ui.text { if item.message then "Permanently delete “" .. item.subject .. "” from " .. item.name .. "?" else "Permanently delete all messages from the last synced inventory of " .. item.name .. "?" },
-				ui.text { item.account .. " · This removes the server copies and cannot be undone." },
+				ui.text { item.account .. (if item.epoch == 0 then " · Messages filed elsewhere stay in those folders. Messages filed only here are deleted permanently." else " · This removes the server copies and cannot be undone.") },
 				ui.row { ui.button { label = "Cancel", msg = "organize" }, ui.button { label = "Confirm permanent deletion", msg = { confirm_expunge = true } } },
 			}
 		elseif state.pane == "organize" then
@@ -588,8 +588,8 @@ return mod {
 			for _, item in mail.remote_operations or {} do
 				table.insert(items, ui.row { ui.text { item.kind .. (if item.subject and item.subject ~= "" then " · " .. item.subject else "") .. " · " .. item.account .. " · " .. item.mailbox .. (if item.uid > 0 then " · UID " .. tostring(item.uid) else "") .. " · " .. item.state },
 					if item.kind == "Draft upload" then ui.button { label = "I checked Drafts for this copy — retry", disabled = mail.busy, msg = { action = "retry_draft_upload", message_id = item.message_id }, to = "provider:mail" } else nil,
-					if item.kind == "Delete" and item.state == "stale" then action("Dismiss changed UIDVALIDITY", "expunge_dismiss", { id = item.id }) else nil,
-					if item.kind == "Delete" and (item.state == "unknown" or item.state == "unsupported") then action("Retry verified UID", "expunge_retry", { id = item.id }) else nil,
+					if item.kind == "Delete" and item.state == "stale" then action("Dismiss changed target", "expunge_dismiss", { id = item.id }) else nil,
+					if item.kind == "Delete" and (item.state == "unknown" or item.state == "unsupported") then action("Retry deletion", "expunge_retry", { id = item.id }) else nil,
 				})
 			end
 			for _, item in mail.move_operations or {} do
@@ -756,15 +756,17 @@ return mod {
 		local no_action = not selected or mail.selected_moving
 		local no_bulk = not selected and (mail.checked_count or 0) == 0
 		local count_summary = tostring(mail.page_count or 0) .. (if mail.threaded then " threads" else " messages") .. (if total_unread > 0 then " · " .. tostring(total_unread) .. " unread" else "")
+		local pager_height = 26
+		local message_pager = ui.row { height = pager_height, class = "mail-table-footer", shrink = false, align = "center",
+			ui.text { tostring(mail.page_count or 0) .. (if mail.threaded then " threads" else " messages") .. " shown", class = "muted" },
+			ui.spacer {}, action("First", "first"),
+			ui.button { label = "Previous", small = true, disabled = not mail.previous, msg = { action = "previous" }, to = "provider:mail" },
+			ui.button { label = "Next", small = true, disabled = not mail.more, msg = { action = "next" }, to = "provider:mail" },
+		}
 		local message_list_pane = ui.column { grow = true, gap = "none",
 			table_header(false, state, mail),
 			first_sync_prompt(mail) or rows(mail.rows, mail.anchor, false, mail.list_key or "initial", mail.threaded, columns(mail, false)),
-			ui.row { height = 26, class = "mail-table-footer", shrink = false, align = "center",
-				ui.text { tostring(mail.page_count or 0) .. (if mail.threaded then " threads" else " messages") .. " shown", class = "muted" },
-				ui.spacer {}, action("First", "first"),
-				ui.button { label = "Previous", small = true, disabled = not mail.previous, msg = { action = "previous" }, to = "provider:mail" },
-				ui.button { label = "Next", small = true, disabled = not mail.more, msg = { action = "next" }, to = "provider:mail" },
-			},
+			message_pager,
 		}
 		local correspondence_pane = ui.column { grow = true, gap = "none",
 			ui.row { height = 27, class = "correspondence-title", shrink = false, align = "center",
@@ -776,15 +778,6 @@ return mod {
 			rows(related, selected and selected.summary.id, true, (mail.related_key or "") .. (if mail.related_thread then "-thread" else "-pairs"), false, columns(mail, true)),
 			ui.row { height = 26, shrink = false, action("First", "related_first", { anchor = mail.anchor }), ui.button { label = "Next", small = true, disabled = not mail.related or not mail.related.next, msg = { action = "related_next", anchor = mail.anchor }, to = "provider:mail" } },
 		}
-		local mail_app_list_pane = ui.column { grow = true, gap = "none",
-			first_sync_prompt(mail) or mail_app_rows(mail.rows, mail.anchor, mail.list_key or "initial", mail.threaded),
-			ui.row { height = 26, class = "mail-table-footer", shrink = false, align = "center",
-				ui.text { tostring(mail.page_count or 0) .. (if mail.threaded then " threads" else " messages") .. " shown", class = "muted" },
-				ui.spacer {}, action("First", "first"),
-				ui.button { label = "Previous", small = true, disabled = not mail.previous, msg = { action = "previous" }, to = "provider:mail" },
-				ui.button { label = "Next", small = true, disabled = not mail.more, msg = { action = "next" }, to = "provider:mail" },
-			},
-		}
 		-- Panes own one inset border each. Split handles still resize, but
 		-- their overlay hairlines would double borders and disappear behind WebKit.
 		local mail_body
@@ -794,8 +787,13 @@ return mod {
 			mail_body = ui.hsplit { id = "mail-app-columns-v1", divider = false,
 				ui.pane { size = 390, min = 280, max = 640, fixed = true, class = "mail-pane-right",
 					ui.vsplit { id = "mail-app-list-and-correspondence", divider = false,
-						ui.pane { size = 500, min = 200, fixed = true, class = "mail-pane-bottom", mail_app_list_pane },
-						ui.pane { min = 180, correspondence_pane },
+						-- The pager's top border is the draggable edge of the message list.
+						ui.pane { size = 500 - pager_height, min = 200 - pager_height, fixed = true,
+							first_sync_prompt(mail) or mail_app_rows(mail.rows, mail.anchor, mail.list_key or "initial", mail.threaded),
+						},
+						ui.pane { min = 180 + pager_height,
+							ui.column { grow = true, gap = "none", message_pager, correspondence_pane },
+						},
 					},
 				},
 				ui.pane { min = 360, reader },

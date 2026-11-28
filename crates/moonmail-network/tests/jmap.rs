@@ -76,6 +76,11 @@ fn respond(mut stream: TcpStream, serve: impl FnOnce(Request) -> Reply) {
     let mut body = vec![0; len];
     input.read_exact(&mut body).unwrap();
     let Reply(code, bytes) = serve(Request { path, body });
+    if (300..400).contains(&code) {
+        let location = std::str::from_utf8(&bytes).unwrap();
+        write!(stream,"HTTP/1.1 {code} Redirect\r\nLocation: {location}\r\nConnection: close\r\nContent-Length: 0\r\n\r\n").unwrap();
+        return;
+    }
     write!(
         stream,
         "HTTP/1.1 {code} Response\r\nConnection: close\r\nContent-Length: {}\r\n\r\n",
@@ -395,7 +400,7 @@ fn upgrade_keeps_existing_archive_and_transport() -> Result {
     let mailbox = archive.mailbox(ACCOUNT, "Old mailbox")?;
     drop(archive);
     let db = rusqlite::Connection::open(dir.path().join("archive.sqlite3"))?;
-    db.execute_batch("DROP TABLE jmap_accounts; DROP TABLE jmap_emails; DROP TABLE jmap_folders; PRAGMA user_version=23;")?;
+    db.execute_batch("DROP TRIGGER jmap_deletion_arrival; DROP TABLE jmap_accounts; DROP TABLE jmap_emails; DROP TABLE jmap_folders; PRAGMA user_version=23;")?;
     let archive = Archive::open(dir.path())?;
     assert_eq!(archive.mailbox(ACCOUNT, "Old mailbox")?, mailbox);
     archive.bind_jmap(ACCOUNT, "a")?;
@@ -578,3 +583,59 @@ fn interrupted_two_blob_window_replays_from_the_durable_cursor() -> Result {
     worker.join().unwrap();
     Ok(())
 }
+
+fn journal_fixture(
+    root: &std::path::Path,
+) -> std::result::Result<(Archive, moonmail_core::MessageId, i64, i64), Box<dyn std::error::Error>>
+{
+    use moonmail_store::{IncomingMessage, JmapFolder};
+    let mut db = Archive::open(root)?;
+    db.bind_jmap(ACCOUNT, "account")?;
+    db.jmap_folders(
+        ACCOUNT,
+        &[
+            JmapFolder {
+                remote: "in".into(),
+                path: "Inbox".into(),
+                role: Some(MailboxRole::Inbox),
+            },
+            JmapFolder {
+                remote: "saved".into(),
+                path: "Saved".into(),
+                role: Some(MailboxRole::Archive),
+            },
+        ],
+        "f",
+    )?;
+    db.checkpoint_jmap(ACCOUNT, "s", None, &[], false)?;
+    let inbox = db.role_mailbox(ACCOUNT, MailboxRole::Inbox)?;
+    let saved = db.role_mailbox(ACCOUNT, MailboxRole::Archive)?;
+    let uid = db.jmap_uid(ACCOUNT, "m")?;
+    let id = db.ingest(
+        &moonmail_mime::StalwartParser::default(),
+        &FileBlobs::new(root),
+        IncomingMessage {
+            account: ACCOUNT,
+            mailbox: inbox,
+            origin: "jmap:m",
+            epoch: 0,
+            uid: Some(uid),
+            seen: false,
+            starred: false,
+            received_at: 1,
+            raw: MIME,
+        },
+    )?;
+    Ok((db, id, inbox, saved))
+}
+
+#[path = "jmap/archive.rs"]
+mod archive;
+#[path = "jmap/deletions.rs"]
+mod deletions;
+#[path = "jmap/journals.rs"]
+mod journals;
+#[path = "jmap/pages.rs"]
+mod pages;
+#[path = "jmap/transport.rs"]
+mod transport;

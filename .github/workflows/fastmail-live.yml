@@ -1,0 +1,39 @@
+name: Fastmail live round trip
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '23 7 * * *'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fastmail-live
+  cancel-in-progress: false
+
+jobs:
+  round-trip:
+    # Secrets only reach code on the default branch. Scheduled runs are opt-in.
+    if: >-
+      github.ref == format('refs/heads/{0}', github.event.repository.default_branch) &&
+      (github.event_name == 'workflow_dispatch' || vars.FASTMAIL_LIVE_ENABLED == 'true')
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Install repository-pinned Rust
+        run: rustup show active-toolchain
+      - name: Compile live test without credentials
+        run: cargo test --locked -p moonmail-network --test fastmail_live --no-run
+      - name: Send from A to B and verify Inbox and Sent
+        timeout-minutes: 12
+        env:
+          MOONMAIL_LIVE_FASTMAIL: '1'
+          FASTMAIL_TEST_A_EMAIL: ${{ secrets.FASTMAIL_TEST_A_EMAIL }}
+          FASTMAIL_TEST_A_TOKEN: ${{ secrets.FASTMAIL_TEST_A_TOKEN }}
+          FASTMAIL_TEST_B_EMAIL: ${{ secrets.FASTMAIL_TEST_B_EMAIL }}
+          FASTMAIL_TEST_B_TOKEN: ${{ secrets.FASTMAIL_TEST_B_TOKEN }}
+        run: cargo test --locked -p moonmail-network --test fastmail_live fastmail_round_trip -- --ignored --exact --nocapture

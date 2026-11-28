@@ -70,3 +70,6 @@ pub use {
     jmap_emails::JmapEmailHandle,
     jmap_flags::JmapFlag,
 };
+
+mod jmap_deletions;
+pub use jmap_deletions::JmapDeletion;

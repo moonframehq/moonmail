@@ -19,6 +19,7 @@ mod imap_keywords;
 mod imap_tls;
 mod incoming;
 pub mod jmap;
+mod jmap_expunge;
 mod jmap_push;
 mod jmap_submission;
 mod jmap_sync;
