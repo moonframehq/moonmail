@@ -557,10 +557,13 @@ you first, through the agent's own permission prompt. Sending is held by
 Moonmail itself, whatever the agent does: every call, reads included, is
 logged.
 
-Choose **Prompt** in the Assistant header to
-read Moonmail’s workspace instructions and preview the mail context for your
-next message. Choose **Back to chat** to return to the conversation. Each agent
-can also supply its own internal instructions.
+Choose **New chat** in the right-hand Assistant panel for a fresh conversation.
+Your first message starts the selected agent. Choose **Prompt** to inspect the
+recent sent prompts, newest first, including the mail context delivered with
+each message. Queued messages appear here once delivered. The transcript keeps
+the tail of long prompts and a bounded number of recent entries. Moonmail’s
+workspace instructions appear below the prompts. Choose **Back to chat** to
+return to the conversation.
 
 **Sending needs your click.** `send_draft` (and `app_action` with `queue`)
 never send. They put a card in the assistant panel showing From, To, Cc, Bcc,
