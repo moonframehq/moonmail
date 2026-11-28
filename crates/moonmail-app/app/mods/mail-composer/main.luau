@@ -1,3 +1,4 @@
+local scramble_view = use "scramble-view"
 local composer = use "mail-compose-view"
 
 local function same_choices(before, after)
@@ -59,6 +60,8 @@ return mod {
 		end
 	end,
 	view = function(state, app)
-		return composer { state = state, mail = app.mail or {} }
+		local mail = app.mail or {}
+		local window = composer { state = state, mail = mail }
+		return scramble_view { tree = window, enabled = mail.scrambled }
 	end,
 }

@@ -25,6 +25,13 @@ The Fastmail trace in `target/moonmail-debug.log` shows the callback, token exch
 IMAP and SMTP checks, and authentication rejection codes. These events omit account
 addresses, tokens, and raw server replies.
 
+For a screenshot, choose **View → Toggle Scramble Mode**. Wait for **Scramble Mode**
+at the bottom of the mail, composer, or settings window, then capture that window.
+Private text appears as dots, and the message body and assistant conversation are hidden.
+Choose the same command to resume editing and using the window’s controls.
+Scramble Mode starts off each time you launch Moonmail.
+Development builds on a branch also show Moonframe’s checkout label below the app.
+
 The MailMate-style layout has a full-height mailbox sidebar, a dense message table
 across the top, **Correspondence below-left**, and the message reader below-right.
 Drag the dividers to resize the panes. Tables use compact, striped rows; the reader

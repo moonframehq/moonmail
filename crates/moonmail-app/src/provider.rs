@@ -81,6 +81,7 @@ enum Event {
 pub struct Mail {
     root: PathBuf,
     demo: bool,
+    scrambled: bool,
     archive: Option<Archive>,
     index: Option<SqliteIndex>,
     query: MailQuery,
@@ -141,6 +142,7 @@ impl Mail {
         Self {
             root,
             demo,
+            scrambled: false,
             archive: None,
             index: None,
             query: MailQuery::default(),
@@ -340,6 +342,7 @@ impl Mail {
             "font_families":self.font_families,"font_preview_url":self.font_preview_url,
             "discovery":self.discovery,"discovering":self.discovery_job.is_some(),"discovery_error":self.discovery_error,
         });
+        snapshot["scrambled"] = json!(self.scrambled);
         snapshot["account"] = json!(self.query.account);
         snapshot["msgvault_accounts"] =
             json!(archive
@@ -557,6 +560,7 @@ impl Mail {
             self.checked.clear();
         }
         match action.as_str() {
+            "toggle_scramble" => self.scrambled = !self.scrambled,
             "partition_close" => self.partition_panel = false,
             "people" => self.people = self.archive()?.frequent_correspondents(30)?,
             "partition_open" | "partition_field" | "partition_first" | "partition_next"
@@ -1229,7 +1233,9 @@ impl Native for Mail {
             );
             return;
         }
-        self.error.clear();
+        if message.get("action").and_then(Data::as_str) != Some("toggle_scramble") {
+            self.error.clear();
+        }
         let window = self.composer_window_event(&message);
         if let Err(error) = self.handle(message) {
             self.error = format!("{error:#}");

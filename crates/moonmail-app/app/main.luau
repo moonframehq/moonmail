@@ -1,3 +1,4 @@
+local scramble_view = use "scramble-view"
 local function action(label, name, extra)
 	local msg = extra or {}
 	msg.action = name
@@ -372,6 +373,7 @@ return mod {
 			{ label = "Previous Message Page", msg = { action = "previous" }, to = "provider:mail" },
 			{ label = "Next Message Page", msg = { action = "next" }, to = "provider:mail" },
 			"-",
+			{ label = "Toggle Scramble Mode", msg = { action = "toggle_scramble" }, to = "provider:mail" },
 			{ label = "Toggle Sidebar", msg = "toggle-sidebar", shortcut = "secondary-alt-s" },
 			{ label = "Toggle Assistant", msg = "toggle-agent", shortcut = "secondary-j" },
 		} },
@@ -826,8 +828,9 @@ return mod {
 		}
 		local status_bar = ui.row { class = "status", height = 22, shrink = false, align = "center", ui.text { mail.status or "Opening local archive…" }, ui.spacer {}, ui.text { mail.sync_schedule or "", tone = "muted" } }
 
+		local window
 		if layout == "mailmate" then
-			return ui.column { grow = true, gap = "none",
+			window = ui.column { grow = true, gap = "none",
 				ui.row { class = "toolbar-mailmate", height = 46, shrink = false, align = "center", drag = true,
 					ui.row { width = 76, shrink = false },
 					flat_tool("panel-left", "Toggle sidebar · ⌥⌘S", "toggle-sidebar", nil, false, not state.sidebar_hidden, "muted-foreground"),
@@ -879,7 +882,7 @@ return mod {
 				status_bar,
 			}
 		elseif layout == "moonmail" then
-			return ui.column { grow = true, gap = "none",
+			window = ui.column { grow = true, gap = "none",
 				ui.hsplit { id = "moonmail-layout-v1", divider = false,
 					ui.pane { size = 232, min = 190, max = 340, fixed = true, visible = not state.sidebar_hidden, class = "sidebar-moonmail mail-pane-right",
 						ui.column { grow = true, gap = "none",
@@ -937,7 +940,7 @@ return mod {
 			}
 		else
 			-- Mail.app layout (Variant B with activity bar)
-			return ui.column { grow = true, gap = "none",
+			window = ui.column { grow = true, gap = "none",
 				ui.hsplit { id = "mail-app-sidebar-v1", divider = false,
 					ui.pane { size = 272, min = 220, max = 380, fixed = true, visible = not state.sidebar_hidden, class = "mail-pane-right",
 						ui.column { grow = true, style = { background = "settings-sidebar" }, gap = "none",
@@ -1013,5 +1016,6 @@ return mod {
 				status_bar,
 			}
 		end
+		return scramble_view { tree = window, enabled = mail.scrambled }
 	end,
 }

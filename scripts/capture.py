@@ -73,7 +73,7 @@ ASSISTANT_CHAT = {
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("output", type=Path)
-    parser.add_argument("view", choices=("mail", "layout-mailmate", "layout-mail", "layout-moonmail", "threads", "thread-warning", "unread-navigation", "correspondence", "searches", "search-results", "partitions", "mailbox-chooser", "move-chooser", "copy-chooser", "folders", "tags", "rules", "columns", "column-settings", "export", "compose", "from-menu", "forward", "drafts", "attachments", "links", "images", "identities", "identity-compose", "settings", "fonts", "sync-settings", "accounts", "add-account", "providers", "gmail-setup", "imap-setup", "outbox", "people", "feedback", "assistant", "organize", "operations"), default="mail", nargs="?")
+    parser.add_argument("view", choices=("mail", "scrambled", "layout-mailmate", "layout-mail", "layout-moonmail", "threads", "thread-warning", "unread-navigation", "correspondence", "searches", "search-results", "partitions", "mailbox-chooser", "move-chooser", "copy-chooser", "folders", "tags", "rules", "columns", "column-settings", "export", "compose", "from-menu", "forward", "drafts", "attachments", "links", "images", "identities", "identity-compose", "settings", "fonts", "sync-settings", "accounts", "add-account", "providers", "gmail-setup", "imap-setup", "outbox", "people", "feedback", "assistant", "organize", "operations"), default="mail", nargs="?")
     args = parser.parse_args()
     repo = Path(__file__).resolve().parent.parent
     binary = repo / "target/debug/moonmail"
@@ -178,7 +178,7 @@ def main():
         if source.count(marker) != 1:
             raise RuntimeError("Update the capture harness for the shell's initial view")
         settings_views = ("settings", "fonts", "sync-settings", "column-settings", "accounts", "add-account", "providers", "gmail-setup", "imap-setup")
-        pane = "settings" if args.view in settings_views else "mail" if args.view in ("feedback", "assistant", "layout-mailmate", "layout-mail", "layout-moonmail", "threads", "thread-warning", "unread-navigation", "images", "correspondence", "search-results", "columns") else "compose" if args.view in ("forward", "identity-compose") else args.view
+        pane = "settings" if args.view in settings_views else "mail" if args.view in ("feedback", "assistant", "scrambled", "layout-mailmate", "layout-mail", "layout-moonmail", "threads", "thread-warning", "unread-navigation", "images", "correspondence", "search-results", "columns") else "compose" if args.view in ("forward", "identity-compose") else args.view
         if args.view in settings_views:
             source = source.replace("width = 1500, height = 940", "width = 980, height = 740")
             source = source.replace("local mail = app.mail or {}", 'local mail = app.mail or {}\n\t\tif state.pane == "settings" then return ui.mount "settings" end', 1)
@@ -231,10 +231,8 @@ def main():
                 source = source.replace('min_size = { width = 620, height = 520 }, ', '', 1)
                 marker = None
             source = source.replace("local mail = app.mail or {}", "local mail = " + luau(snapshot), 1)
-            if args.view in ("compose", "forward", "identity-compose", "from-menu"):
-                source = source.replace("mail = app.mail or {}", "mail = " + luau(snapshot), 1)
             if args.view == "from-menu":
-                source = source.replace("return composer { state = state,", "state.from_open = true; state.from_index = 1\n\t\treturn composer { state = state,", 1)
+                source = source.replace("local window = composer {", "state.from_open = true; state.from_index = 1\n\t\tlocal window = composer {", 1)
             if args.view in ("searches", "search-results"):
                 source = source.replace('query = "", email = "",', 'query = ' + luau(snapshot["search"]) + ', email = "",', 1)
             if args.view in ("mailbox-chooser", "move-chooser", "copy-chooser"):
@@ -281,7 +279,7 @@ def main():
         env["MOONFRAME_CAPTURE"] = str(output)
         # The capture window can exit while its history subprocess is still
         # writing the temporary Git store. Let that process finish before cleanup.
-        with subprocess.Popen([binary, "--user", overlay], env=env, start_new_session=True) as app:
+        with subprocess.Popen([binary, "--background", "--user", overlay], env=env, start_new_session=True) as app:
             try:
                 status = app.wait(timeout=60)
             except subprocess.TimeoutExpired:

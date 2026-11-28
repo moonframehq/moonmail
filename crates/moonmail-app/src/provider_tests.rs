@@ -1475,3 +1475,57 @@ fn an_account_root_shows_only_that_accounts_mail() -> Result<()> {
     );
     Ok(())
 }
+
+#[test]
+fn scramble_masks_rendered_mail_and_restores_the_original_view() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    moonmail_store::seed_demo(&mut Archive::open(dir.path())?, &FileBlobs::new(dir.path()))?;
+    let mut mail = Mail::new(dir.path().to_owned(), true);
+    mail.initialize()?;
+    let mut workspace = ui_workspace()?;
+    let toggle = || data(json!({"action":"toggle_scramble"}));
+    for layout in ["mail", "mailmate", "moonmail"] {
+        mail.handle(data(json!({"action":"layout","value":layout})))?;
+        for enabled in [false, true, false] {
+            if mail.scrambled != enabled {
+                mail.handle(toggle())?;
+            }
+            let mut snapshot = mail.snapshot()?;
+            snapshot["preferences"]["reader_renderer"] = json!(if layout == "mailmate" {
+                "native"
+            } else {
+                "webkit"
+            });
+            snapshot["selected"]["summary"]["subject"] = json!("Private selected subject");
+            snapshot["rows"][0]["subject"] = json!("Private list subject");
+            snapshot["status"] = json!("Private sync status");
+            snapshot["draft"] = json!({"id":"demo","recipients":"Private recipient","subject":"Private draft","body":"Private body","account":"private@example.test","cc":"","bcc":"","reply_id":""});
+            workspace.set_host("mail", data(snapshot));
+            assert!(
+                workspace.problems().is_empty(),
+                "{:?}",
+                workspace.problems()
+            );
+            for (slot, secret) in [
+                (workspace.shell(), "Private selected subject"),
+                (
+                    workspace.slot("mail-composer").context("composer")?,
+                    "Private body",
+                ),
+                (workspace.slot("settings").context("settings")?, ""),
+            ] {
+                let tree = format!("{:?}", slot.view().context("missing view")?);
+                assert_eq!(tree.contains("Scramble Mode"), enabled);
+                if !secret.is_empty() {
+                    assert_eq!(tree.contains(secret), !enabled);
+                }
+                if enabled {
+                    assert!(!tree.contains("Private"));
+                    assert!(!tree.contains("message-reader"));
+                    assert!(!tree.contains("private@example.test"));
+                }
+            }
+        }
+    }
+    Ok(())
+}

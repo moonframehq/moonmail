@@ -1,3 +1,4 @@
+local scramble_view = use "scramble-view"
 local fonts = use "settings-fonts"
 local accounts = use "settings-accounts"
 local columns = use "settings-columns"
@@ -270,7 +271,7 @@ return mod {
 				caption("Your original messages stay on this Mac. Font changes preserve your other stylesheet customizations.")
 			)
 		end
-		return ui.row { class = "mm-settings-window", grow = true, gap = "none",
+		local window = ui.row { class = "mm-settings-window", grow = true, gap = "none",
 			ui.hsplit { id = "settings-sidebar", divider = false,
 				ui.pane { size = 224, min = 200, max = 340, fixed = true,
 					ui.column { grow = true, class = "mm-settings-sidebar", table.unpack(nav) },
@@ -282,6 +283,7 @@ return mod {
 				},
 			},
 		}
+		return scramble_view { tree = window, enabled = mail.scrambled }
 	end,
 	styles = {
 		[".mm-settings-window"] = { background = "settings-window" },

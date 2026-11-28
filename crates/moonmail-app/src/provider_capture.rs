@@ -19,6 +19,9 @@ impl Mail {
                 ("value", Data::String(name.into())),
             ]))?;
         }
+        if view == "scrambled" {
+            mail.handle(Data::map([("action", Data::from("toggle_scramble"))]))?;
+        }
         if view == "accounts" {
             for (provider, email) in [
                 (moonmail_network::Provider::Google, "you@gmail.com"),
@@ -158,6 +161,9 @@ impl Mail {
             ]))?;
         }
         let mut snapshot = mail.snapshot()?;
+        if mail.scrambled {
+            return Ok(snapshot);
+        }
         for key in ["html_url", "plain_url"] {
             if let Some(source) = snapshot[key].as_str().filter(|url| !url.is_empty()) {
                 let mut url = url::Url::parse(source)?;
