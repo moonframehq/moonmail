@@ -576,7 +576,11 @@ Pick the agent (Claude, Codex, OpenCode, pi, Gemini, Copilot: whatever
 starts with what you are looking at (the selected and checked messages, the
 folder and the search). When the agent wants to use a tool that writes, the
 panel shows the question with the agent's options (Allow, Always allow,
-Reject). The list button shows the activity log. The panel is Moonframe's
+Reject). Open a tool run to see its results. Each muted preview wraps to three
+lines. Click it to read the original text, and click again to collapse it.
+Long results have Previous and Next buttons.
+
+The list button shows the activity log. The panel is Moonframe's
 `agent-chat` component: folded tool runs, a composer that sends on Enter and
 recalls earlier prompts, `/` commands, the queue, and mode, model and effort
 pickers. `herdr-acp` is found on PATH or inside Sheprd.app; set `program` in
