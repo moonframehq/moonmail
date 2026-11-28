@@ -228,8 +228,7 @@ local function account_icon(account)
 	return if string.match(account, "^msgvault ") then "database" else "at-sign"
 end
 
-local function mailbox_row(layout, label, icon, icon_color, badge_bg, count, selected, msg)
-	local row_height = if layout == "moonmail" then 32 elseif layout == "mail" then 30 else 28
+local function mailbox_row(layout, row_height, label, icon, icon_color, badge_bg, count, selected, msg)
 	local row_class = if layout == "moonmail" then "mailbox-row-moonmail" elseif layout == "mail" then "mailbox-row-mail" else "mailbox-row"
 	local glyph
 	if layout == "moonmail" and badge_bg then
@@ -250,8 +249,7 @@ local function mailbox_row(layout, label, icon, icon_color, badge_bg, count, sel
 	}
 end
 
-local function folder_nodes(layout, children, nodes, state, mail, depth, use_badges)
-	local row_height = if layout == "moonmail" then 32 elseif layout == "mail" then 30 else 28
+local function folder_nodes(layout, row_height, children, nodes, state, mail, depth, use_badges)
 	local row_class = if layout == "moonmail" then "mailbox-row-moonmail" elseif layout == "mail" then "mailbox-row-mail" else "mailbox-row"
 	for _, node in nodes do
 		local branch = #(node.children or {}) > 0
@@ -279,7 +277,7 @@ local function folder_nodes(layout, children, nodes, state, mail, depth, use_bad
 			ui.column { grow = true, ui.text { if node.account then account_label(node.account) elseif node.name == "INBOX" then "Inbox" else node.name, truncate = true } },
 			if node.unread and node.unread > 0 then ui.text { tostring(node.unread), class = "mailbox-count" } else nil,
 		})
-		if branch and not closed then folder_nodes(layout, children, node.children, state, mail, depth + 1, false) end
+		if branch and not closed then folder_nodes(layout, row_height, children, node.children, state, mail, depth + 1, false) end
 	end
 end
 
@@ -369,6 +367,10 @@ return mod {
 			{ label = "MailMate Layout", msg = { action = "layout", value = "mailmate" }, to = "provider:mail", shortcut = "secondary-1" },
 			{ label = "Mail.app Layout", msg = { action = "layout", value = "mail" }, to = "provider:mail", shortcut = "secondary-2" },
 			{ label = "Moonmail Layout", msg = { action = "layout", value = "moonmail" }, to = "provider:mail", shortcut = "secondary-3" },
+			"-",
+			{ label = "First Message Page", msg = { action = "first" }, to = "provider:mail" },
+			{ label = "Previous Message Page", msg = { action = "previous" }, to = "provider:mail" },
+			{ label = "Next Message Page", msg = { action = "next" }, to = "provider:mail" },
 			"-",
 			{ label = "Toggle Sidebar", msg = "toggle-sidebar", shortcut = "secondary-alt-s" },
 			{ label = "Toggle Assistant", msg = "toggle-agent", shortcut = "secondary-j" },
@@ -480,10 +482,11 @@ return mod {
 			if saved.id == mail.active_saved_search then title = saved.name .. (if mail.partition_value then " · " .. mail.partition_value else "") end
 		end
 		local layout = (mail.preferences or {}).layout or "mail"
+		local row_height = (mail.preferences or {}).folder_row_height or 20
 		local label_class = if layout == "mailmate" then "sidebar-label" else "sidebar-label-mail"
 		local sidebar = {
 			ui.text { if layout == "mail" then "Favorites" else "Mailboxes", class = label_class },
-			mailbox_row(layout, "All Messages", "mails", "accent", "#5856d6", total_unread, not mail.mailbox and not mail.account and state.pane == "mail" and mail.filter == "all", { action = "folder", id = 0 }),
+			mailbox_row(layout, row_height, "All Messages", "mails", "accent", "#5856d6", total_unread, not mail.mailbox and not mail.account and state.pane == "mail" and mail.filter == "all", { action = "folder", id = 0 }),
 		}
 		for _, name in { "INBOX", "Archive", "Sent", "Junk", "Trash" } do
 			local children = {}
@@ -495,25 +498,25 @@ return mod {
 				end
 			end
 			if #children > 0 then
-				folder_nodes(layout, sidebar, { { key = "role:" .. name, name = name, id = if #children == 1 then children[1].id else nil, unread = unread, children = children } }, state, mail, 0, layout == "moonmail")
+				folder_nodes(layout, row_height, sidebar, { { key = "role:" .. name, name = name, id = if #children == 1 then children[1].id else nil, unread = unread, children = children } }, state, mail, 0, layout == "moonmail")
 			end
 		end
-		table.insert(sidebar, mailbox_row(layout, "Drafts", "file-text", "muted-foreground", "#8b929b", mail.draft_count or 0, state.pane == "drafts", "drafts"))
-		table.insert(sidebar, mailbox_row(layout, "Outbox", "upload", "muted-foreground", "#8b929b", mail.outbox_count or 0, state.pane == "outbox", "outbox"))
+		table.insert(sidebar, mailbox_row(layout, row_height, "Drafts", "file-text", "muted-foreground", "#8b929b", mail.draft_count or 0, state.pane == "drafts", "drafts"))
+		table.insert(sidebar, mailbox_row(layout, row_height, "Outbox", "upload", "muted-foreground", "#8b929b", mail.outbox_count or 0, state.pane == "outbox", "outbox"))
 		if layout == "moonmail" then
-			table.insert(sidebar, mailbox_row(layout, "People", "users", "muted-foreground", "#8b5cf6", nil, state.pane == "people", "people"))
+			table.insert(sidebar, mailbox_row(layout, row_height, "People", "users", "muted-foreground", "#8b5cf6", nil, state.pane == "people", "people"))
 		end
 		table.insert(sidebar, ui.text { "Views", class = label_class })
-		table.insert(sidebar, mailbox_row(layout, "Unread", "mail", "accent", nil, nil, mail.filter == "unread", { action = "filter", value = "unread" }))
-		table.insert(sidebar, mailbox_row(layout, "Flagged", "flag", "#f59e0b", "#f28b35", nil, mail.filter == "starred", { action = "filter", value = "starred" }))
-		table.insert(sidebar, mailbox_row(layout, "Saved Searches", "search", "muted-foreground", nil, #(mail.saved_searches or {}), state.pane == "searches", "searches"))
-		table.insert(sidebar, mailbox_row(layout, "Mail Operations", "list-checks", "muted-foreground", nil, mail.unresolved_operations or 0, state.pane == "operations", "operations"))
-		table.insert(sidebar, mailbox_row(layout, "Move & Folders", "folder-open", "muted-foreground", nil, nil, state.pane == "organize", "organize"))
+		table.insert(sidebar, mailbox_row(layout, row_height, "Unread", "mail", "accent", nil, nil, mail.filter == "unread", { action = "filter", value = "unread" }))
+		table.insert(sidebar, mailbox_row(layout, row_height, "Flagged", "flag", "#f59e0b", "#f28b35", nil, mail.filter == "starred", { action = "filter", value = "starred" }))
+		table.insert(sidebar, mailbox_row(layout, row_height, "Saved Searches", "search", "muted-foreground", nil, #(mail.saved_searches or {}), state.pane == "searches", "searches"))
+		table.insert(sidebar, mailbox_row(layout, row_height, "Mail Operations", "list-checks", "muted-foreground", nil, mail.unresolved_operations or 0, state.pane == "operations", "operations"))
+		table.insert(sidebar, mailbox_row(layout, row_height, "Move & Folders", "folder-open", "muted-foreground", nil, nil, state.pane == "organize", "organize"))
 		table.insert(sidebar, ui.text { if layout == "mailmate" then "Sources" else "Accounts", class = label_class })
 		local sources = table.clone(mail.folder_tree or {})
 		for _, source in sources do source.icon = account_icon(source.name) end
-		folder_nodes(layout, sidebar, sources, state, mail, 0, false)
-		if #sources == 0 then table.insert(sidebar, mailbox_row(layout, "Connect an account…", "at-sign", "muted-foreground", nil, nil, state.pane == "settings", "settings")) end
+		folder_nodes(layout, row_height, sidebar, sources, state, mail, 0, false)
+		if #sources == 0 then table.insert(sidebar, mailbox_row(layout, row_height, "Connect an account…", "at-sign", "muted-foreground", nil, nil, state.pane == "settings", "settings")) end
 		local related = table.clone((mail.related or {}).rows or {})
 		if mail.related and mail.related.anchor then table.insert(related, 1, mail.related.anchor) end
 		local reader
@@ -778,12 +781,6 @@ return mod {
 		}
 		local mail_app_list_pane = ui.column { grow = true, gap = "none",
 			first_sync_prompt(mail) or mail_app_rows(mail.rows, mail.anchor, mail.list_key or "initial", mail.threaded),
-			ui.row { height = 26, class = "mail-table-footer", shrink = false, align = "center",
-				ui.text { tostring(mail.page_count or 0) .. (if mail.threaded then " threads" else " messages") .. " shown", class = "muted" },
-				ui.spacer {}, action("First", "first"),
-				ui.button { label = "Previous", small = true, disabled = not mail.previous, msg = { action = "previous" }, to = "provider:mail" },
-				ui.button { label = "Next", small = true, disabled = not mail.more, msg = { action = "next" }, to = "provider:mail" },
-			},
 		}
 		-- Panes own one inset border each. Split handles still resize, but
 		-- their overlay hairlines would double borders and disappear behind WebKit.
@@ -874,7 +871,7 @@ return mod {
 					},
 					ui.hsplit { id = "mailmate-layout-v1", divider = false,
 						ui.pane { size = 220, min = 170, max = 340, fixed = true, visible = not state.sidebar_hidden, class = "sidebar mail-pane-right",
-							ui.column { grow = true, scroll = true, gap = "none", table.unpack(sidebar) },
+							ui.column { grow = true, scroll = true, style = { gap = 1 }, table.unpack(sidebar) },
 						},
 						ui.pane { min = 600, mail_body },
 					},
@@ -890,7 +887,7 @@ return mod {
 								ui.spacer {},
 								sq_btn("panel-left", "Toggle sidebar · ⌥⌘S", "toggle-sidebar", nil, false, false, "muted-foreground"),
 							},
-							ui.column { grow = true, scroll = true, style = { gap = 4 }, table.unpack(sidebar) },
+							ui.column { grow = true, scroll = true, style = { gap = 1 }, table.unpack(sidebar) },
 							ui.row { height = 34, shrink = false, align = "center", class = "sidebar-footer", msg = "settings", tooltip = "Settings · ⌘,",
 								ui.icon { name = "settings", style = { font_size = 15, color = "muted-foreground" } },
 								ui.text { "Settings", style = { font_size = 13, color = "muted-foreground" } },

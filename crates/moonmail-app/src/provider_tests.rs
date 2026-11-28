@@ -1308,6 +1308,37 @@ fn bundled_workspace() -> Result<Workspace> {
 }
 
 #[test]
+fn folder_spacing_updates_live_and_survives_other_settings_saves() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    std::fs::write(dir.path().join("preferences.json"), r#"{"font_size":13}"#)?;
+    let mut mail =
+        Mail::new(dir.path().into(), true).with_font_config(dir.path().join("ui/style.luau"));
+    mail.initialize()?;
+    assert_eq!(mail.preferences.folder_row_height, 20);
+
+    let mut workspace = bundled_workspace()?;
+    for (step, expected) in [(-2, 20), (2, 22), (2, 24), (-2, 22)] {
+        mail.handle(data(json!({"action":"folder_spacing","step":step})))?;
+        let snapshot = mail.snapshot()?;
+        assert_eq!(snapshot["preferences"]["folder_row_height"], expected);
+        workspace.set_host("mail", data(snapshot));
+        assert!(
+            workspace.problems().is_empty(),
+            "{:?}",
+            workspace.problems()
+        );
+        let settings = workspace.slot("settings").context("No settings")?;
+        assert!(format!("{:?}", settings.view()).contains(&format!("{expected} pt")));
+    }
+    mail.handle(data(json!({"action":"settings_save","interface_family":"Helvetica","list_family":"Menlo","font_size":"13","reader_family":"Helvetica","reader_size":"12"})))?;
+    assert_eq!(
+        crate::fonts::Preferences::load(dir.path())?.folder_row_height,
+        22
+    );
+    Ok(())
+}
+
+#[test]
 fn layout_switching_persists_validates_and_renders_all_three_modes() -> Result<()> {
     let dir = tempfile::tempdir()?;
     moonmail_store::seed_demo(&mut Archive::open(dir.path())?, &FileBlobs::new(dir.path()))?;

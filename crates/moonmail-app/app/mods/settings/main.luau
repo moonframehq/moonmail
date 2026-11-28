@@ -80,8 +80,9 @@ local function icon_picker(current)
 end
 -- Everything but fonts applies at once, as System Settings does. Fonts keep
 -- their own Apply, so browsing them doesn't restyle the app under the user.
-local function save(state, also)
+local function save(state, also, reset)
 	local request = table.clone(state.values); request.action = "settings_save"
+	if reset then request.folder_row_height = 20 end
 	state.dirty = true; state.saved = true
 	local effects = { { to = "provider:mail", msg = request } }
 	if also then table.insert(effects, also) end
@@ -101,7 +102,7 @@ return mod {
 		elseif msg == "close" then return state, { { to = "app:window", msg = { close = "settings" } } }
 		elseif msg == "defaults" then
 			state.values = table.clone(DEFAULTS)
-			return save(state, if state.page == "fonts" then preview(state) else nil)
+			return save(state, if state.page == "fonts" then preview(state) else nil, true)
 		elseif msg == "reset-font" then
 			state.values[state.font_target] = DEFAULTS[state.font_target]
 			local size = if state.font_target == "reader_family" then "reader_size" else "font_size"
@@ -210,6 +211,7 @@ return mod {
 		if state.page == "fonts" then content = fonts { state = state, mail = mail }
 		elseif state.page == "account" then content = accounts { state = state, mail = mail }
 		elseif state.page == "appearance" then
+			local height = (mail.preferences or {}).folder_row_height or 20
 			local function font_row(field, title, size)
 				return link_row(title, family(v[field]) .. " · " .. size .. " pt", { font_target = field })
 			end
@@ -218,6 +220,12 @@ return mod {
 					row("Color scheme", nil, segmented({ { "system", "Auto" }, { "light", "Light" }, { "dark", "Dark" } }, mode, "app:appearance")),
 					hairline(),
 					row("Window layout", "Also switchable from the View menu (⌘1, ⌘2, ⌘3).", segmented({ { "mailmate", "MailMate" }, { "mail", "Mail.app" }, { "moonmail", "Moonmail" } }, v.layout, nil, 76)),
+					hairline(),
+					row("Folder row height", nil, ui.row { align = "center", gap = "small",
+						ui.button { label = "−", small = true, tooltip = "Decrease folder row height", disabled = height <= 20, msg = { action = "folder_spacing", step = -2 }, to = "provider:mail" },
+						ui.text { tostring(height) .. " pt" },
+						ui.button { label = "+", small = true, tooltip = "Increase folder row height", disabled = height >= 32, msg = { action = "folder_spacing", step = 2 }, to = "provider:mail" },
+					}),
 					hairline(),
 					icon_picker(v.app_icon)
 				),

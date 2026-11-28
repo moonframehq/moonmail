@@ -152,6 +152,11 @@ interface, and **Helvetica 12** for the reader. The interface and lists share a
 size; the reader has its own. Changes apply live. Threaded-list and mark-as-read
 preferences are saved too. System/Light/Dark appearance uses Moonframe's setting.
 
+**Settings → Appearance → Folder row height** adjusts the folder list in every layout.
+Rows start at 20 pt. Use − or + to adjust them live in 2 pt steps up to 32 pt.
+In the Mail.app layout, use the **View**
+menu to go to the first, previous, or next page of messages.
+
 **Settings → Reading & Lists → Message renderer** changes the open message immediately.
 The choice is stored as `"reader_renderer": "native"` or `"reader_renderer": "webkit"`
 in the archive’s `preferences.json`. Existing and new profiles default to WebKit.

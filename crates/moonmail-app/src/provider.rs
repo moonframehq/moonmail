@@ -929,6 +929,20 @@ impl Mail {
                 self.preferences = settings;
                 self.status = "Column layout saved".into();
             },
+            "folder_spacing" => {
+                let step = match message.get("step").and_then(Data::as_i64) {
+                    Some(-2) => -2,
+                    Some(2) => 2,
+                    _ => anyhow::bail!("Invalid folder spacing step"),
+                };
+                let mut settings = self.preferences.clone();
+                settings.folder_row_height = settings
+                    .folder_row_height
+                    .saturating_add_signed(step)
+                    .clamp(20, 32);
+                settings.save(&self.root)?;
+                self.preferences = settings;
+            },
             "layout" => {
                 let layout = crate::layout::Layout::parse(&text("value"))?;
                 let mut settings = self.preferences.clone();
@@ -941,6 +955,13 @@ impl Mail {
                 let settings = crate::fonts::Preferences {
                     interface_family: text("interface_family").trim().to_owned(),
                     list_family: text("list_family").trim().to_owned(),
+                    folder_row_height: match message.get("folder_row_height") {
+                        Some(height) => height
+                            .as_i64()
+                            .and_then(|n| u16::try_from(n).ok())
+                            .context("Invalid folder row height")?,
+                        None => self.preferences.folder_row_height,
+                    },
                     font_size: text("font_size")
                         .parse()
                         .context("Enter an interface font size between 10 and 16")?,

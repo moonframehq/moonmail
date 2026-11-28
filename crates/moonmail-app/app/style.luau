@@ -94,7 +94,7 @@ return style {
 		[".rail-btn:hover"] = { background = "foreground/8", color = "foreground" },
 		[".rail-btn:selected"] = { background = "accent/16", color = "accent" },
 		[".sidebar"] = { background = "sidebar", padding = { 8, 8 }, gap = 2 },
-		[".sidebar-mail"] = { background = "settings-sidebar", padding = { 4, 10, 10, 10 }, gap = 2 },
+		[".sidebar-mail"] = { background = "settings-sidebar", padding = { 4, 10, 10, 10 }, gap = 1 },
 		[".sidebar-mail-head"] = { background = "settings-sidebar", padding = { 0, 12, 0, 14 }, border = "bottom", border_color = "foreground/6" },
 		[".sidebar-moonmail"] = { background = "settings-sidebar", padding = { 0, 12, 12, 12 }, gap = 4 },
 		[".sidebar-label"] = { padding = { 10, 9, 4, 9 }, font_size = 11, weight = "semibold", color = "muted-foreground" },

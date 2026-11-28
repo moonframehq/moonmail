@@ -43,6 +43,7 @@ pub struct Preferences {
     pub interface_family: String,
     pub list_family: String,
     pub font_size: u16,
+    pub folder_row_height: u16,
     pub reader: ReaderFont,
     pub reader_renderer: crate::reader_backend::Renderer,
     pub load_remote_images: bool,
@@ -62,6 +63,7 @@ impl Default for Preferences {
             interface_family: ".AppleSystemUIFont".into(),
             list_family: "JetBrains Mono".into(),
             font_size: 12,
+            folder_row_height: 20,
             reader: ReaderFont::default(),
             reader_renderer: Default::default(),
             load_remote_images: false,
@@ -90,6 +92,10 @@ impl Preferences {
     }
     pub fn validate(&self) -> Result<()> {
         self.columns.validate()?;
+        anyhow::ensure!(
+            (20..=32).contains(&self.folder_row_height),
+            "Folder row height must be between 20 and 32 points"
+        );
         anyhow::ensure!(
             matches!(self.sync_minutes, 0 | 1 | 5 | 15 | 30),
             "Choose manual sync or 1, 5, 15, or 30 minutes"
