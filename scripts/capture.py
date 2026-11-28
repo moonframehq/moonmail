@@ -34,16 +34,51 @@ def luau(value):
     return str(value)
 
 
+# A synthetic assistant conversation for the `assistant` view, in the shape
+# of the prepared view `agent-chat` draws (moonframe-chat-view).
+def picker(id, name, current, choices):
+    return {"id": id, "name": name, "send": "mode" if id == "mode" else "setting", "kind": "select",
+            "current": current, "current_name": next(c["name"] for c in choices if c["id"] == current), "choices": choices}
+
+
+ASSISTANT_CHAT = {
+    "id": "capture-chat", "status": "live",
+    "view": {
+        "agent": "Claude", "status": "working", "accepts": True, "read_only": False, "auto_accept": False,
+        "hidden": 0, "truncated": False, "permissions": [], "queue": [], "settings": [], "commands": [], "activities": [],
+        "mode": picker("mode", "Mode", "default", [{"id": "default", "name": "Ask first"}, {"id": "plan", "name": "Plan"}]),
+        "model": picker("model", "Model", "opus", [{"id": "opus", "name": "Opus 5.5"}, {"id": "sonnet", "name": "Sonnet 5.5"}]),
+        "usage": {"used": 31200, "size": 200000, "percent": 16, "text": "31.2k / 200k"},
+        "rows": [
+            {"type": "user", "key": "e1", "text": "What needs a reply from me?", "context": True},
+            {"type": "tools", "key": "e2", "title": "Searched mail, read 2 messages", "status": "done", "live": False,
+             "count": 3, "failed": 0, "more": 0, "files": [], "items": [
+                {"type": "tool", "id": "a", "kind": "search", "title": "search is:unread", "status": "done", "steps": 0, "files": []},
+                {"type": "tool", "id": "b", "kind": "read", "title": "message 1", "status": "done", "steps": 0, "files": []},
+                {"type": "tool", "id": "c", "kind": "read", "title": "message 4", "status": "done", "steps": 0, "files": []}]},
+            {"type": "answer", "key": "e3", "streaming": False, "text": "Two messages wait on you:\n\n- **Clara Jensen** - *A quieter place to work*: asks for your notes before Thursday.\n- **Julian Park** - *Notes from the coast*: wants a yes or no on the trip dates."},
+            {"type": "turn", "key": "e4", "end": "done", "duration_ms": 9000, "tokens": 6100, "text": "Worked 9s · 6.1k tokens"},
+            {"type": "user", "key": "e5", "text": "Reply to Clara that Thursday works, and send it", "context": True},
+            {"type": "tools", "key": "e6", "title": "Drafted a reply, asked to send it", "status": "running", "live": True,
+             "count": 2, "failed": 0, "more": 0, "current": "send_draft", "files": [], "items": [
+                {"type": "tool", "id": "d", "kind": "edit", "title": "create_draft", "status": "done", "steps": 0, "files": []},
+                {"type": "tool", "id": "e", "kind": "other", "title": "send_draft", "status": "running", "steps": 0, "files": []}]},
+        ],
+    },
+}
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("output", type=Path)
-    parser.add_argument("view", choices=("mail", "layout-mailmate", "layout-mail", "layout-moonmail", "threads", "thread-warning", "unread-navigation", "correspondence", "searches", "search-results", "partitions", "mailbox-chooser", "move-chooser", "copy-chooser", "folders", "tags", "rules", "columns", "column-settings", "export", "compose", "from-menu", "forward", "drafts", "attachments", "links", "images", "identities", "identity-compose", "settings", "fonts", "sync-settings", "accounts", "add-account", "providers", "gmail-setup", "imap-setup", "outbox", "people", "feedback", "organize", "operations"), default="mail", nargs="?")
+    parser.add_argument("view", choices=("mail", "layout-mailmate", "layout-mail", "layout-moonmail", "threads", "thread-warning", "unread-navigation", "correspondence", "searches", "search-results", "partitions", "mailbox-chooser", "move-chooser", "copy-chooser", "folders", "tags", "rules", "columns", "column-settings", "export", "compose", "from-menu", "forward", "drafts", "attachments", "links", "images", "identities", "identity-compose", "settings", "fonts", "sync-settings", "accounts", "add-account", "providers", "gmail-setup", "imap-setup", "outbox", "people", "feedback", "assistant", "organize", "operations"), default="mail", nargs="?")
     args = parser.parse_args()
     repo = Path(__file__).resolve().parent.parent
     binary = repo / "target/debug/moonmail"
     output = args.output.resolve()
     output.parent.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix="moonmail-capture-") as directory:
+    # The app's history writer can still be finishing as the folder goes.
+    with tempfile.TemporaryDirectory(prefix="moonmail-capture-", ignore_cleanup_errors=True) as directory:
         sources = Path(directory)
         root = sources / "archive"
         env = dict(os.environ, MOONMAIL_DEMO="1", MOONMAIL_DATA_DIR=str(root),
@@ -141,7 +176,7 @@ def main():
         if source.count(marker) != 1:
             raise RuntimeError("Update the capture harness for the shell's initial view")
         settings_views = ("settings", "fonts", "sync-settings", "column-settings", "accounts", "add-account", "providers", "gmail-setup", "imap-setup")
-        pane = "settings" if args.view in settings_views else "mail" if args.view in ("feedback", "layout-mailmate", "layout-mail", "layout-moonmail", "threads", "thread-warning", "unread-navigation", "images", "correspondence", "search-results", "columns") else "compose" if args.view in ("forward", "identity-compose") else args.view
+        pane = "settings" if args.view in settings_views else "mail" if args.view in ("feedback", "assistant", "layout-mailmate", "layout-mail", "layout-moonmail", "threads", "thread-warning", "unread-navigation", "images", "correspondence", "search-results", "columns") else "compose" if args.view in ("forward", "identity-compose") else args.view
         if args.view in settings_views:
             source = source.replace("width = 1500, height = 940", "width = 980, height = 740")
             source = source.replace("local mail = app.mail or {}", 'local mail = app.mail or {}\n\t\tif state.pane == "settings" then return ui.mount "settings" end', 1)
@@ -176,6 +211,17 @@ def main():
             shutil.copytree(repo / "crates/moonmail-app/app/mods/settings/icons", mod / "icons")
         if args.view not in settings_views and args.view != "feedback":
             snapshot = json.loads(subprocess.check_output([binary, "capture-snapshot", args.view], env=env, text=True, timeout=30))
+            if args.view == "assistant":
+                snapshot.setdefault("agent", {})["approvals"] = [{
+                    "id": 1, "digest": "capture", "draft": "capture-draft", "subject": "Re: A quieter place to work",
+                    "from": "you@example.com", "to": "\"Clara Jensen\" <clara@example.org>", "cc": "", "bcc": "", "attachments": 0,
+                    "body": "Thanks Clara, Thursday works. I'll bring my notes.\n\nOn Tue, 03 Nov 2026, Clara Jensen wrote:\n> I wanted to send you a few notes before the week gets away from us.",
+                    "truncated": False,
+                }]
+                snapshot["agent"]["activity"] = [
+                    {"id": 1, "at": 0, "source": "mcp", "tool": "search", "writes": False, "ok": True, "summary": "search {\"query\":\"is:unread\"}"},
+                    {"id": 2, "at": 0, "source": "mcp", "tool": "create_draft", "writes": True, "ok": True, "summary": "Drafted “Re: A quieter place to work”"},
+                ]
             if args.view in ("compose", "forward", "identity-compose", "from-menu"):
                 # Render the real composer mod at its own native window size,
                 # rather than stretching it inside the main mailbox shell.
@@ -201,6 +247,22 @@ def main():
                 reader = root / f"capture-{kind}.html"
                 if reader.exists():
                     shutil.copyfile(reader, output.with_suffix(f".{kind}.html"))
+        if args.view == "assistant":
+            opened = "agent_open = if previous then previous.agent_open == true else false"
+            if source.count(opened) != 1:
+                raise RuntimeError("Update the capture harness for the assistant toggle")
+            source = source.replace(opened, "agent_open = true", 1)
+            agent = (repo / "crates/moonmail-app/app/mods/mail-agent/main.luau").read_text()
+            replacements = {
+                "local mail = app.mail or {}": "local mail = " + luau(snapshot),
+                "started = \"chat-started\",": "started = \"chat-started\", view = " + luau(ASSISTANT_CHAT) + ",",
+            }
+            for before, after in replacements.items():
+                if agent.count(before) != 1:
+                    raise RuntimeError("Update the capture harness for the assistant mod")
+                agent = agent.replace(before, after, 1)
+            (overlay / "mods/mail-agent").mkdir(parents=True)
+            (overlay / "mods/mail-agent/main.luau").write_text(agent)
         (overlay / "main.luau").write_text(source.replace(marker, f'pane = "{pane}", rich =', 1) if marker else source)
         if args.view == "feedback":
             metadata = json.loads(subprocess.check_output(

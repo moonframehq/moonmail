@@ -371,14 +371,16 @@ return mod {
 			{ label = "Moonmail Layout", msg = { action = "layout", value = "moonmail" }, to = "provider:mail", shortcut = "secondary-3" },
 			"-",
 			{ label = "Toggle Sidebar", msg = "toggle-sidebar", shortcut = "secondary-alt-s" },
+			{ label = "Toggle Assistant", msg = "toggle-agent", shortcut = "secondary-j" },
 		} },
 	},
-	init = function(previous) return { query = "", email = "", pane = "mail", rich = true, thread = false, focus = false, sidebar_hidden = false, closed = if previous then previous.closed or {} else {}, related_sort = "date", related_ascending = false } end,
+	init = function(previous) return { query = "", email = "", pane = "mail", rich = true, thread = false, focus = false, sidebar_hidden = false, closed = if previous then previous.closed or {} else {}, related_sort = "date", related_ascending = false, agent_open = if previous then previous.agent_open == true else false } end,
 	update = function(state, msg)
 		if msg == "compose" or msg == "reply" or msg == "reply_all" or msg == "forward" or msg == "forward_text" then
 			return state, { { to = "provider:mail", msg = { action = msg } } }
 		elseif msg == "settings" then return state, { { to = "settings", msg = "open" } }
 		elseif msg == "toggle-sidebar" then state.sidebar_hidden = not state.sidebar_hidden
+		elseif msg == "toggle-agent" then state.agent_open = not state.agent_open
 		elseif msg == "mail" or msg == "outbox" or msg == "organize" or msg == "operations" or msg == "drafts" or msg == "links" or msg == "identities" or msg == "searches" or msg == "folders" then
 			state.pane = msg
 			return state, { { to = "provider:mail", msg = { action = "partition_close" } } }
@@ -809,6 +811,15 @@ return mod {
 				},
 			}
 		end
+		-- The assistant (mods/mail-agent) beside the mail, ⌘J; it opens by
+		-- itself while a send the agent asked for waits for the user.
+		local waiting = mail.agent and mail.agent.approvals and #mail.agent.approvals > 0
+		if state.agent_open or waiting then
+			mail_body = ui.hsplit { id = "mail-agent-split-v1", divider = false,
+				ui.pane { min = 480, class = "mail-pane-right", mail_body },
+				ui.pane { size = 380, min = 300, max = 640, fixed = true, ui.mount "mail-agent" },
+			}
+		end
 		local alerts = ui.column { gap = "none", shrink = false,
 			if mail.error and mail.error ~= "" then ui.text { mail.error, class = "error" } else nil,
 			if (mail.checked_count or 0) > 0 then ui.row { height = 30, shrink = false, padding = "small", align = "center",
@@ -849,6 +860,7 @@ return mod {
 					flat_tool("list-tree", if mail.threaded then "Show individual messages" else "Group messages into expandable threads", { action = "threaded" }, "provider:mail", false, mail.threaded),
 					flat_tool("refresh-cw", "Sync · ⌘R", { action = "sync" }, "provider:mail", mail.busy or mail.demo, false, "muted-foreground"),
 					search_field("mail-search-box", 210, 28, "Search messages", state),
+					flat_tool("bot", "Assistant · ⌘J", "toggle-agent", nil, false, state.agent_open, "muted-foreground"),
 					ui.mount "feedback",
 				},
 				alerts,
@@ -916,6 +928,7 @@ return mod {
 									sq_btn("refresh-cw", "Sync · ⌘R", { action = "sync" }, "provider:mail", mail.busy or mail.demo)
 								),
 								search_field("mail-search-sq", 185, 30, "Search", state),
+								sq_btn("bot", "Assistant · ⌘J", "toggle-agent", nil, false, state.agent_open, "muted-foreground"),
 								ui.mount "feedback",
 							},
 							alerts,
@@ -992,6 +1005,7 @@ return mod {
 									capsule_btn("refresh-cw", "Sync · ⌘R", { action = "sync" }, "provider:mail", mail.busy or mail.demo)
 								),
 								search_field("mail-search-pill", 190, 32, "Search", state),
+								circle_btn("bot", "Assistant · ⌘J", "toggle-agent", nil, false, state.agent_open),
 								ui.mount "feedback",
 							},
 							alerts,

@@ -223,7 +223,7 @@ fn local_transfers_labels_live_search_and_v16_migration() -> Result {
     assert!(archive.keyword_operations("a", 0)?.is_empty());
     assert_eq!(
         db.pragma_query_value(None, "user_version", |r| r.get::<_, i64>(0))?,
-        28
+        30
     );
     Ok(())
 }

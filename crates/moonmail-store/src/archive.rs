@@ -77,7 +77,7 @@ impl Archive {
             transaction.pragma_query_value(None, "user_version", |row| row.get(0))?;
         match version {
             0 => transaction.execute_batch(include_str!("schema.sql"))?,
-            1..=28 => {},
+            1..=30 => {},
             version => return Err(Error::Schema(version)),
         }
         if version < 2 {
@@ -190,6 +190,12 @@ impl Archive {
         }
         if version < 28 {
             transaction.execute_batch(include_str!("external_blobs.sql"))?;
+        }
+        if version < 29 {
+            transaction.execute_batch(include_str!("activity.sql"))?;
+        }
+        if version < 30 {
+            transaction.execute_batch(include_str!("requests.sql"))?;
         }
         transaction.commit()?;
         connection.execute_batch(

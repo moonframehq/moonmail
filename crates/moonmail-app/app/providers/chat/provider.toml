@@ -1,0 +1,13 @@
+# Agent chats for the assistant panel (mods/mail-agent): one ACP session per
+# conversation, run by Sheprd's herdr-acp with no view of its own, as Sheprd
+# runs its chats. The agent asks before each tool that writes; the panel
+# shows the question. Chats outlive the app and reattach at the next launch.
+interval = 0.25
+kind     = "native"
+
+[settings]
+# The agent a new conversation starts with: claude, codex, opencode, pi,
+# gemini, copilot... as `herdr-acp agents` lists them.
+agent = "claude"
+# herdr-acp is found on PATH or inside Sheprd.app; set `program` to use another.
+starters = ["mail-agent"]
