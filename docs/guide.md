@@ -568,13 +568,19 @@ waits up to five minutes for your answer, then checks back with
 This holds even for an agent running with permissions bypassed.
 
 **Assistant panel.** Press ⌘J (View › Toggle Assistant, or the bot button) to
-open a conversation beside your mail. It runs over the Agent Client Protocol
+open a conversation beside your mail. Use **A−** or **A+** in the Assistant
+header to resize the current conversation as you read. Moonmail remembers
+the size for future chats. It runs over the Agent Client Protocol
 through Sheprd's `herdr-acp`, as Sheprd's own chats do: one persistent session
 per conversation, which outlives the app and reattaches at the next launch.
 Pick the agent (Claude, Codex, OpenCode, pi, Gemini, Copilot: whatever
 `herdr-acp agents` lists) and its model in the panel's header. Each message
 starts with what you are looking at (the selected and checked messages, the
-folder and the search). When the agent wants to use a tool that writes, the
+folder, search and pinned Correspondence or Reply Thread anchor). The assistant
+can read earlier exchanges with `correspondence`. The MCP tool `app_state`
+returns the pane's pinned message, current rows in display order and whether
+another page is available under `app.related`. Each row has an ID the assistant
+can pass to `message` to read its text. When the agent wants to use a tool that writes, the
 panel shows the question with the agent's options (Allow, Always allow,
 Reject). Open a tool run to see its results. Each muted preview wraps to three
 lines. Click it to read the original text, and click again to collapse it.
