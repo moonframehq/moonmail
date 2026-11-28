@@ -18,21 +18,21 @@ local SUGGESTIONS = {
 	"Make a rule that tags mail like this",
 }
 
--- What the user is looking at, sent before each prompt and hidden from
--- their bubble.
-local function context(mail)
-	local parts = {}
-	local selected = mail.selected and mail.selected.summary
-	if selected then
-		table.insert(parts, `selected message {selected.id} “{selected.subject}” from {selected.sender} <{selected.address}>`)
-	end
-	if mail.related and mail.related.anchor then
-		local tool = if mail.related_thread then "thread" else "correspondence"
-		table.insert(parts, `{tool} pane pinned to message {mail.related.anchor.id} (use {tool} with this ID for history, or app_state for the displayed page)`)
-	end
+-- Each field occupies one line in the hidden app-context frame.
+local function field(label, value)
+	return label .. ": " .. (string.gsub(value, "[\r\n]+", " "))
+end
+
+local function mail_view(mail)
 	local checked = {}
 	for _, row in mail.rows or {} do
 		if row.checked then table.insert(checked, tostring(row.id)) end
+	end
+	table.sort(checked)
+	local parts = {}
+	if mail.related and mail.related.anchor then
+		local tool = if mail.related_thread then "thread" else "correspondence"
+		table.insert(parts, `{tool} pane pinned to message {mail.related.anchor.id} (use {tool} with this ID for history, or app_state for the displayed page)`)
 	end
 	if #checked > 0 then table.insert(parts, "checked messages " .. table.concat(checked, ", ")) end
 	for _, mailbox in mail.mailboxes or {} do
@@ -41,8 +41,56 @@ local function context(mail)
 		end
 	end
 	if mail.search and mail.search ~= "" then table.insert(parts, `search {mail.search}`) end
-	if #parts == 0 then return nil end
-	return "In Moonmail the user is looking at: " .. table.concat(parts, "; ") .. "."
+	return if #parts > 0 then table.concat(parts, "; ") else "none"
+end
+
+-- Read only Moonmail fields in the frame, never text from the visible prompt.
+local function frame_field(text, label)
+	local frame = string.match(text, "^<app%-context>\n(.-)\n</app%-context>\n\n")
+	if frame then
+		return string.match("\n" .. frame .. "\n", "\n(" .. label .. ": [^\n]*)\n")
+	end
+	return nil
+end
+
+local function needs_field(transcript, label, current)
+	if not transcript then return true end
+	-- A queued update can still be removed. Omit the field only if it is
+	-- already established and no queued prompt could change it.
+	for _, queued in transcript.queued or {} do
+		local prior = frame_field(queued.text, label)
+		if (prior and prior ~= current) or string.sub(queued.text, 1, 3) == "…" then return true end
+	end
+	local entries = transcript.entries or {}
+	for index = #entries, 1, -1 do
+		local entry = entries[index].kind
+		if entry.type == "user" then
+			local prior = frame_field(entry.text, label)
+			if prior then return prior ~= current end
+			-- Moonframe keeps the tail of long prompts, which may hide a frame.
+			if string.sub(entry.text, 1, 3) == "…" then break end
+		end
+	end
+	return true
+end
+
+local function context(mail, chats, id)
+	local transcript
+	for _, chat in chats or {} do
+		if chat.id == id then
+			transcript = chat.transcript
+			break
+		end
+	end
+	local selected = mail.selected and mail.selected.summary
+	local message = field("Open email", if selected
+		then `message {selected.id} “{selected.subject}” from {selected.sender} <{selected.address}>`
+		else "none")
+	local view = field("Mail view", mail_view(mail))
+	local parts = {}
+	if needs_field(transcript, "Open email", message) then table.insert(parts, message) end
+	if needs_field(transcript, "Mail view", view) then table.insert(parts, view) end
+	return if #parts > 0 then table.concat(parts, "\n") else nil
 end
 
 -- A send the agent asked for: Moonmail sends only when the user presses
@@ -99,10 +147,10 @@ local function activity_view(activity)
 	return ui.column { gap = "small", table.unpack(rows) }
 end
 
-local function prompt_view(mail, guide)
+local function prompt_view(next_context, guide)
 	return ui.column { grow = true, scroll = true, padding = "large", gap = "small",
 		ui.text { "Context for the next message", weight = "semibold" },
-		ui.text { context(mail) or "No mail context selected.", wrap = true },
+		ui.text { next_context or "Mail context is unchanged.", wrap = true },
 		ui.text { "Moonmail workspace instructions", weight = "semibold" },
 		ui.markdown { text = guide or "Loading instructions…" },
 	}
@@ -157,9 +205,10 @@ return mod {
 		for _, ask in (mail.agent and mail.agent.approvals) or {} do
 			table.insert(approvals, approval_view(ask))
 		end
+		local next_context = context(mail, app.chat and app.chat.chats, state.chat)
 		local body
 		if state.page == "prompt" and mail.agent and mail.agent.dir then
-			body = prompt_view(mail, state.instructions)
+			body = prompt_view(next_context, state.instructions)
 		elseif state.page == "log" then
 			body = ui.column { grow = true, scroll = true, gap = "small", padding = "large",
 				ui.text { "Every Moonmail tool an agent called, newest first.", class = "agent-hint" },
@@ -174,7 +223,7 @@ return mod {
 				id = `mail-assistant-{state.generation}`,
 				chat = state.chat,
 				cwd = mail.agent.dir,
-				context = context(mail),
+				context = next_context,
 				title = "Ask about your mail",
 				placeholder = "Ask about your mail…",
 				suggestions = SUGGESTIONS,

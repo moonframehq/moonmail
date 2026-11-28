@@ -8,6 +8,8 @@ kind     = "native"
 [settings]
 # The agent a new conversation starts with: claude, codex, opencode, pi,
 # gemini, copilot... as `herdr-acp agents` lists them.
-agent = "claude"
 # herdr-acp is found on PATH or inside Sheprd.app; set `program` to use another.
+agent = "claude"
+# Compare hidden context against the prompts delivered in this conversation.
+raw      = true
 starters = ["mail-agent"]
