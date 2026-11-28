@@ -304,10 +304,7 @@ impl Mail {
     fn snapshot(&self) -> Result<serde_json::Value> {
         let archive = self.archive()?;
         let outbox = archive.outbox_page(self.outbox_before, 50)?;
-        let related = self
-            .related_query()
-            .map(|query| archive.related_page(&query, 50))
-            .transpose()?;
+        let related = self.related_page()?;
         let mailboxes = archive.mailboxes()?;
         use std::hash::{Hash, Hasher};
         let mut list_hash = std::hash::DefaultHasher::new();

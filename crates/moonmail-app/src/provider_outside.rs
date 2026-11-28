@@ -299,6 +299,14 @@ impl Mail {
                 .map(|folder| json!({ "id": folder.id, "name": folder.name, "account": folder.account })),
             None => None,
         };
+        // The request journal caps each answer. Related rows need only a label
+        // and an ID to read the full message, even for large mailing lists.
+        let related_row = |row: &moonmail_core::MailSummary| {
+            json!({
+                "id": row.id, "subject": row.subject.chars().take(256).collect::<String>(),
+                "sender": row.sender.chars().take(96).collect::<String>(), "date": row.date,
+            })
+        };
         Ok(json!({
             "folder": folder,
             "account": self.query.account,
@@ -307,6 +315,11 @@ impl Mail {
             "rows": rows,
             "more": self.page.next.is_some(),
             "selected": self.selected.as_ref().map(|detail| &detail.summary),
+            "related": self.related_page()?.map(|page| json!({
+                "mode": self.relationship, "anchor": related_row(&page.anchor),
+                "rows": page.rows.iter().map(related_row).collect::<Vec<_>>(),
+                "more": page.next.is_some()
+            })),
             "checked": self.checked.iter().collect::<Vec<_>>(),
             "draft": self.draft,
             "layout": self.preferences.layout,
@@ -501,6 +514,51 @@ mod tests {
             }
             call.join().map_err(|_| anyhow::anyhow!("tool thread"))?
         })
+    }
+
+    #[test]
+    fn agent_reads_history_from_the_pinned_pane() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        moonmail_store::seed_demo(&mut Archive::open(dir.path())?, &FileBlobs::new(dir.path()))?;
+        let mut mail = Mail::new(dir.path().to_owned(), true);
+        mail.initialize()?;
+        let pane = mail.snapshot()?["related"].clone();
+        let anchor = &pane["anchor"]["id"];
+        let previous = pane["rows"][0]["id"].as_u64().context("related message")?;
+        mail.handle(data(json!({"action":"related","id":previous})))?;
+        let state = answered(&mut mail, dir.path(), "app_state", json!({}))?;
+        assert_eq!(state["app"]["selected"]["id"], previous);
+        let related = &state["app"]["related"];
+        assert_eq!(related["mode"], "correspondence");
+        assert_eq!(related["anchor"]["id"], *anchor);
+        let ids = |rows: &serde_json::Value| -> Result<Vec<serde_json::Value>> {
+            Ok(rows
+                .as_array()
+                .context("rows")?
+                .iter()
+                .map(|row| row["id"].clone())
+                .collect())
+        };
+        assert_eq!(ids(&related["rows"])?, ids(&pane["rows"])?);
+        let history = tool(dir.path(), "correspondence", json!({"id":anchor}))?;
+        assert!(
+            history["messages"]
+                .as_array()
+                .context("correspondence")?
+                .iter()
+                .any(|row| row["id"] == previous)
+        );
+        let message = tool(dir.path(), "message", json!({"id":previous}))?;
+        assert!(!message["text"].as_str().context("message text")?.is_empty());
+
+        mail.handle(data(json!({"action":"related_mode","anchor":anchor})))?;
+        let state = answered(&mut mail, dir.path(), "app_state", json!({}))?;
+        assert_eq!(state["app"]["related"]["mode"], "thread");
+        assert_eq!(
+            ids(&state["app"]["related"]["rows"])?,
+            ids(&mail.snapshot()?["related"]["rows"])?
+        );
+        Ok(())
     }
 
     #[test]
