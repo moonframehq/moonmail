@@ -34,12 +34,23 @@ final class ReaderCheck: NSObject, WKNavigationDelegate {
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-        webView.evaluateJavaScript("JSON.stringify({images:Array.from(document.images).map(i=>({src:i.getAttribute('src'),width:i.naturalWidth,height:i.naturalHeight})),links:document.querySelectorAll('a[href]').length,active:document.querySelectorAll('script,iframe,object,embed').length})") { value, error in
+        let inspect = """
+        JSON.stringify({
+            images: Array.from(document.images, i => ({
+                src: i.getAttribute('src'), renderedHeight: i.getBoundingClientRect().height,
+                width: i.naturalWidth, height: i.naturalHeight
+            })),
+            links: document.querySelectorAll('a[href]').length,
+            active: document.querySelectorAll('script,iframe,object,embed').length
+        })
+        """
+        webView.evaluateJavaScript(inspect) { value, error in
             guard error == nil, let text = value as? String,
                   let data = text.data(using: .utf8),
                   let result = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                   let images = result["images"] as? [[String: Any]],
                   images.contains(where: { ($0["width"] as? Int) == 160 && ($0["height"] as? Int) == 80 }),
+                  images.contains(where: { $0["src"] is NSNull && ($0["renderedHeight"] as? Double) == 0 }),
                   images.allSatisfy({ ($0["src"] is NSNull) || ($0["src"] as? String)?.hasPrefix("data:image/png;base64,") == true }),
                   result["links"] as? Int == 0, result["active"] as? Int == 0 else {
                 self.fail("Unexpected rendered resources: \(String(describing: value)), \(String(describing: error))")
