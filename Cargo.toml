@@ -26,6 +26,7 @@ base64                   = "0.22"
 chrono                   = { default-features = false, features = ["std"], version = "0.4" }
 core-text                = "21"
 criterion                = "0.8"
+css-inline               = { default-features = false, version = "0.25" }
 flate2                   = "1"
 fs2                      = "0.4"
 html2text                = "0.16"
@@ -33,6 +34,7 @@ image                    = { default-features = false, features = ["gif", "jpeg"
 imap                     = "=3.0.0-alpha.15"
 imap-codec               = { default-features = false, features = ["ext_condstore_qresync", "starttls"], version = "=2.0.0-alpha.10" }
 imap-proto               = "0.16.7"
+kuchikiki                = "=0.8.8-speedreader"
 linkify                  = "0.10"
 mail-builder             = "2"
 mail-parser              = { features = ["full_encoding"], version = "1.0.1" }

@@ -7,6 +7,7 @@ rust-version.workspace = true
 version.workspace      = true
 
 [dependencies]
+flate2.workspace        = true
 html2text.workspace     = true
 mail-parser.workspace   = true
 moonmail-core.workspace = true

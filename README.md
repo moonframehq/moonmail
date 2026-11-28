@@ -97,7 +97,7 @@ just ci
 - **msgvault** archives are found automatically in `$MSGVAULT_HOME` or `~/.msgvault` and mirrored read-only, one account per email source, with msgvault's folders, read state and deletions kept current. [msgvault setup](docs/guide.md#see-a-msgvault-archive).
 - **Local import** supports nested Maildir and Maildir++ folders, mboxrd and length-framed mbox, and individual or grouped EML files from the Mail menu and CLI.
 - **Reading**: threads, Correspondence, and sanitized HTML with remote images
-  blocked.
+  blocked by default. Load images for one message or enable automatic loading in Reading & Lists.
 - **Search**: fields, Boolean operators, saved searches and partitions, on a
   local index.
 - **Writing**: separate composer windows, identities, signatures, attachments

@@ -11,10 +11,13 @@ mod live_maildir;
 mod local;
 mod mail_import;
 mod msgvault;
+mod native_reader;
 mod navigation;
 mod page;
 mod provider;
+mod reader_backend;
 mod reader_resources;
+mod remote_images;
 
 use {
     anyhow::Result,
@@ -52,6 +55,13 @@ impl AssetSource for AppAssets {
 
 fn run() -> Result<ExitCode> {
     let args: Vec<_> = std::env::args().skip(1).collect();
+    #[cfg(all(feature = "capture", target_os = "macos"))]
+    if let [command, output, helper] = args.as_slice()
+        && command == "reader-bench"
+    {
+        provider::reader_bench::run(output.as_ref(), helper.as_ref())?;
+        return Ok(ExitCode::SUCCESS);
+    }
     let check = args.iter().any(|arg| arg == "--check")
         || matches!(args.first().map(String::as_str), Some("mockup" | "mockups"));
     let packaging = args.first().is_some_and(|arg| arg == "bundle");
@@ -155,9 +165,16 @@ fn run() -> Result<ExitCode> {
                 fonts::path(demo)
             }
         });
+    let documents = reader_backend::DocumentSlot::default();
+    let view_documents = documents.clone();
     Ok(app
+        .view("mail-reader", move |init, _, _| {
+            native_reader::ReaderView::new(view_documents.clone(), init.props())
+        })
         .native("mail", move || {
-            provider::Mail::new(root.clone(), demo).with_font_config(font_config.clone())
+            provider::Mail::new(root.clone(), demo)
+                .with_font_config(font_config.clone())
+                .with_documents(documents.clone())
         })
         .run())
 }

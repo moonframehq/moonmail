@@ -6,4 +6,4 @@ CREATE TABLE IF NOT EXISTS activity (
     tool TEXT NOT NULL DEFAULT '', writes INTEGER NOT NULL DEFAULT 1,
     ok INTEGER NOT NULL DEFAULT 1, summary TEXT NOT NULL
 );
-PRAGMA user_version=27;
+PRAGMA user_version=29;

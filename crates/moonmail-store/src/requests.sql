@@ -6,4 +6,4 @@ CREATE TABLE IF NOT EXISTS agent_requests (
     state TEXT NOT NULL DEFAULT 'pending', detail TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS agent_requests_pending ON agent_requests(state, id);
-PRAGMA user_version=28;
+PRAGMA user_version=30;

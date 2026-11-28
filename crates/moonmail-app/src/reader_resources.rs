@@ -14,6 +14,8 @@ use {
 pub struct ReaderLinks {
     pub items: Vec<String>,
     pub truncated: bool,
+    #[serde(skip)]
+    pub image_urls: Vec<String>,
 }
 
 /// Only explicit HTTP(S) URLs are offered to the system browser. Relative URLs,
@@ -56,6 +58,15 @@ pub fn links(text: &str, html: Option<&str>) -> Result<ReaderLinks> {
             .url_schemes(HashSet::from(["http", "https"]))
             .url_relative(ammonia::UrlRelative::Deny)
             .attribute_filter(move |element, attribute, value| {
+                if element == "img"
+                    && attribute == "src"
+                    && let Ok(mut links) = collected.lock()
+                    && links.image_urls.len() < crate::remote_images::MAX_IMAGES
+                    && let Some(url) = crate::remote_images::image_url(value)
+                    && !links.image_urls.contains(&url)
+                {
+                    links.image_urls.push(url);
+                }
                 if element == "a"
                     && attribute == "href"
                     && let Ok(mut links) = collected.lock()
@@ -130,7 +141,7 @@ pub fn images<P: MimeAttachments>(raw: &[u8], parser: &P) -> Result<EmbeddedImag
     Ok(images)
 }
 
-fn raster_png(bytes: &[u8]) -> Result<Vec<u8>> {
+pub(super) fn raster_png(bytes: &[u8]) -> Result<Vec<u8>> {
     let mut reader = image::ImageReader::new(Cursor::new(bytes)).with_guessed_format()?;
     anyhow::ensure!(
         matches!(

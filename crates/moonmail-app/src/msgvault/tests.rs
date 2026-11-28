@@ -221,3 +221,270 @@ fn the_worker_rescans_only_after_msgvault_commits() -> Result<()> {
     assert_eq!(vault.boxes()?, [("INBOX".into(), 2, 1)]);
     Ok(())
 }
+
+const ADA: &str = "msgvault ada@example.test";
+
+#[test]
+fn imports_newest_first_and_picks_up_arrivals_and_resumes() -> Result<()> {
+    let vault = Vault::new()?;
+    for id in 1..=450 {
+        vault.add(id, &format!("Message {id}"), true, &[1])?;
+    }
+    detect(vault.store.path(), &vault.path())?;
+    // Stop after the first backfill batch, as a quit would.
+    let mut archive = Archive::open(vault.store.path())?;
+    let db = open(&vault.path())?;
+    let account = archive.msgvault_accounts()?.remove(0);
+    let mut mirror = Mirror::new(&mut archive, &db, &account)?;
+    mirror.archive.begin_msgvault(ADA, 450)?;
+    assert_eq!(mirror.batch(451, false)?, Some((251, 200)));
+    drop(mirror);
+    let states = archive.msgvault_states(ADA)?;
+    assert!(states.contains_key(&450) && states.contains_key(&251));
+    assert!(!states.contains_key(&250));
+    // The newest message was stored first.
+    assert!(states[&450].message.0 < states[&251].message.0);
+    let account = archive.msgvault_accounts()?.remove(0);
+    assert_eq!((account.cursor, account.backfill), (450, 251));
+    drop(archive);
+
+    vault.add(451, "Arrived meanwhile", false, &[1])?;
+    assert_eq!(vault.sync()?, 251);
+    let archive = Archive::open(vault.store.path())?;
+    let account = archive.msgvault_accounts()?.remove(0);
+    assert_eq!((account.cursor, account.backfill), (451, 0));
+    assert_eq!(archive.msgvault_states(ADA)?.len(), 451);
+    assert_eq!(vault.boxes()?, [("INBOX".into(), 451, 1)]);
+    Ok(())
+}
+
+#[test]
+fn removed_accounts_disappear_stay_removed_and_can_be_restored() -> Result<()> {
+    let vault = Vault::new()?;
+    vault.add(1, "Hello", false, &[1])?;
+    detect(vault.store.path(), &vault.path())?;
+    vault.sync()?;
+    let mut archive = Archive::open(vault.store.path())?;
+    archive.remove_msgvault(ADA)?;
+    assert!(archive.remove_msgvault(ADA).is_err());
+    assert!(archive.msgvault_accounts()?.is_empty());
+    assert!(archive.mailboxes()?.iter().all(|b| b.account != ADA));
+    drop(archive);
+    assert!(detect(vault.store.path(), &vault.path())?.is_empty());
+    Archive::open(vault.store.path())?.forget_removed_msgvault()?;
+    assert_eq!(detect(vault.store.path(), &vault.path())?, [ADA]);
+    vault.sync()?;
+    assert_eq!(vault.boxes()?, [("INBOX".into(), 1, 1)]);
+    Ok(())
+}
+
+#[test]
+fn a_removal_during_import_is_not_undone_by_the_import() -> Result<()> {
+    let vault = Vault::new()?;
+    vault.add(1, "Hello", false, &[1])?;
+    vault.add(2, "Again", false, &[1])?;
+    detect(vault.store.path(), &vault.path())?;
+    let mut archive = Archive::open(vault.store.path())?;
+    let db = open(&vault.path())?;
+    let account = archive.msgvault_accounts()?.remove(0);
+    Archive::open(vault.store.path())?.remove_msgvault(ADA)?;
+    let mut mirror = Mirror::new(&mut archive, &db, &account)?;
+    assert_eq!(mirror.ingest(&mut |_| {})?, 0);
+    drop(mirror);
+    assert!(archive.mailboxes()?.iter().all(|b| b.account != ADA));
+    assert!(archive.msgvault_states(ADA)?.is_empty());
+    Ok(())
+}
+
+#[test]
+fn gmail_stars_follow_the_starred_label() -> Result<()> {
+    let vault = Vault::new()?;
+    vault
+        .db()?
+        .execute("INSERT INTO labels VALUES (9,1,'STARRED',NULL)", [])?;
+    vault.add(1, "Starred", true, &[1, 9])?;
+    detect(vault.store.path(), &vault.path())?;
+    vault.sync()?;
+    let starred = |vault: &Vault| -> Result<bool> {
+        let archive = Archive::open(vault.store.path())?;
+        let id = archive.msgvault_states(ADA)?[&1].message;
+        Ok(archive.detail(id)?.summary.starred)
+    };
+    assert!(starred(&vault)?);
+    vault
+        .db()?
+        .execute("DELETE FROM message_labels WHERE label_id=9", [])?;
+    vault.sync()?;
+    assert!(!starred(&vault)?);
+    Ok(())
+}
+
+fn files(vault: &Vault) -> usize {
+    fn count(dir: &Path) -> usize {
+        fs::read_dir(dir).map_or(0, |entries| {
+            entries
+                .flatten()
+                .map(|e| {
+                    if e.path().is_dir() {
+                        count(&e.path())
+                    } else {
+                        1
+                    }
+                })
+                .sum()
+        })
+    }
+    count(&vault.store.path().join("messages"))
+}
+
+#[test]
+fn originals_stay_in_msgvault_and_read_through() -> Result<()> {
+    use moonmail_core::BlobStore;
+    let vault = Vault::new()?;
+    vault.add(1, "Kept in msgvault", true, &[1])?;
+    detect(vault.store.path(), &vault.path())?;
+    vault.sync()?;
+    assert_eq!(files(&vault), 0);
+    let archive = Archive::open(vault.store.path())?;
+    let id = archive.msgvault_states(ADA)?[&1].message;
+    let blobs = FileBlobs::new(vault.store.path());
+    let raw = blobs.get(&archive.message_blob(id)?)?;
+    assert!(String::from_utf8_lossy(&raw).contains("Subject: Kept in msgvault"));
+    assert!(archive.detail(id)?.text.contains("Synthetic body 1"));
+    // Gone from msgvault: the message stays listed, its original is unavailable.
+    vault
+        .db()?
+        .execute("DELETE FROM message_raw WHERE message_id=1", [])?;
+    assert!(matches!(
+        blobs.get(&archive.message_blob(id)?),
+        Err(moonmail_store::BlobError::ExternalMissing)
+    ));
+    Ok(())
+}
+
+#[test]
+fn earlier_copies_are_released_unless_another_account_uses_them() -> Result<()> {
+    use moonmail_core::BlobStore;
+    let vault = Vault::new()?;
+    vault.add(1, "Only mirrored", true, &[1])?;
+    vault.add(2, "Also synced directly", true, &[1])?;
+    detect(vault.store.path(), &vault.path())?;
+    vault.sync()?;
+    let mut archive = Archive::open(vault.store.path())?;
+    let blobs = FileBlobs::new(vault.store.path());
+    let states = archive.msgvault_states(ADA)?;
+    let (only, shared) = (
+        archive.message_blob(states[&1].message)?,
+        archive.message_blob(states[&2].message)?,
+    );
+    // Copies written by an earlier version, and one IMAP account sharing a copy.
+    for hash in [&only, &shared] {
+        let raw = blobs.get(hash)?;
+        assert_eq!(&blobs.put(&raw)?, hash);
+    }
+    let inbox = archive.mailbox("ada@example.test", "INBOX")?;
+    archive.ingest(
+        &StalwartParser::default(),
+        &blobs,
+        IncomingMessage {
+            account: "ada@example.test",
+            mailbox: inbox,
+            origin: "imap",
+            epoch: 0,
+            uid: None,
+            seen: true,
+            starred: false,
+            received_at: 0,
+            raw: &blobs.get(&shared)?,
+        },
+    )?;
+    assert_eq!(files(&vault), 2);
+    assert_eq!(release(&archive, &blobs)?, 1);
+    assert_eq!(files(&vault), 1);
+    assert!(blobs.get(&only).is_ok() && blobs.get(&shared).is_ok());
+    Ok(())
+}
+
+#[test]
+fn views_across_accounts_show_a_mirrored_message_once() -> Result<()> {
+    use moonmail_core::{BlobStore, MailQuery, MailRepository};
+    let vault = Vault::new()?;
+    vault.add(1, "Synced twice", false, &[1])?;
+    vault.add(2, "Only in msgvault", false, &[1])?;
+    detect(vault.store.path(), &vault.path())?;
+    vault.sync()?;
+    let mut archive = Archive::open(vault.store.path())?;
+    let blobs = FileBlobs::new(vault.store.path());
+    let raw = blobs.get(&archive.message_blob(archive.msgvault_states(ADA)?[&1].message)?)?;
+    let inbox = archive.mailbox("ada@example.test", "INBOX")?;
+    archive.ingest(
+        &StalwartParser::default(),
+        &blobs,
+        IncomingMessage {
+            account: "ada@example.test",
+            mailbox: inbox,
+            origin: "imap",
+            epoch: 0,
+            uid: None,
+            seen: false,
+            starred: false,
+            received_at: 0,
+            raw: &raw,
+        },
+    )?;
+    let subjects = |query: MailQuery| -> Result<Vec<(String, String)>> {
+        let mut rows = archive
+            .page(&query, 50)?
+            .rows
+            .into_iter()
+            .map(|row| Ok((row.subject, archive.message_account(row.id)?)))
+            .collect::<Result<Vec<_>>>()?;
+        rows.sort();
+        Ok(rows)
+    };
+    assert_eq!(
+        subjects(MailQuery::default())?,
+        [
+            ("Only in msgvault".into(), ADA.into()),
+            ("Synced twice".into(), "ada@example.test".into()),
+        ]
+    );
+    let mirror = MailQuery {
+        account: Some(ADA.into()),
+        ..MailQuery::default()
+    };
+    assert_eq!(subjects(mirror)?.len(), 2);
+    Ok(())
+}
+
+#[test]
+fn a_different_message_reusing_a_message_id_hides_nothing() -> Result<()> {
+    use moonmail_core::{MailQuery, MailRepository};
+    let vault = Vault::new()?;
+    vault.add(1, "Real invoice", false, &[1])?;
+    detect(vault.store.path(), &vault.path())?;
+    vault.sync()?;
+    let mut archive = Archive::open(vault.store.path())?;
+    let blobs = FileBlobs::new(vault.store.path());
+    let inbox = archive.mailbox("ada@example.test", "INBOX")?;
+    let forged =
+        b"From: Bob <bob@example.test>\r\nTo: ada@example.test\r\nSubject: Real invoice\r\n\
+Message-ID: <1@example.test>\r\n\r\nPay to a different account";
+    archive.ingest(
+        &StalwartParser::default(),
+        &blobs,
+        IncomingMessage {
+            account: "ada@example.test",
+            mailbox: inbox,
+            origin: "imap",
+            epoch: 0,
+            uid: None,
+            seen: false,
+            starred: false,
+            received_at: 0,
+            raw: forged,
+        },
+    )?;
+    assert_eq!(archive.page(&MailQuery::default(), 50)?.rows.len(), 2);
+    Ok(())
+}
