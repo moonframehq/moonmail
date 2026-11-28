@@ -93,6 +93,15 @@ local function activity_view(activity)
 	return ui.column { gap = "small", table.unpack(rows) }
 end
 
+local function prompt_view(mail, guide)
+	return ui.column { grow = true, scroll = true, padding = "large", gap = "small",
+		ui.text { "Context for the next message", weight = "semibold" },
+		ui.text { context(mail) or "No mail context selected.", wrap = true },
+		ui.text { "Moonmail workspace instructions", weight = "semibold" },
+		ui.markdown { text = guide or "Loading instructions…" },
+	}
+end
+
 return mod {
 	title = "Assistant",
 	styles = {
@@ -115,9 +124,14 @@ return mod {
 			-- A new component instance starts a new chat on its first prompt.
 			state.chat = nil
 			state.generation += 1
-			state.log = false
-		elseif msg == "log" then
-			state.log = not state.log
+			state.page = nil
+		elseif msg == "log" or msg == "prompt" then
+			state.page = if state.page == msg then nil else msg
+			if state.page == "prompt" then
+				return state, { { to = "provider:mail", msg = "agent_instructions" } }
+			end
+		elseif type(msg) == "table" and type(msg.instructions) == "string" then
+			state.instructions = msg.instructions
 		elseif type(msg) == "table" and msg.msg == "chat-started" then
 			state.chat = msg.chat
 		elseif type(msg) == "table" and msg.msg == "link" and type(msg.url) == "string" then
@@ -133,7 +147,9 @@ return mod {
 			table.insert(approvals, approval_view(ask))
 		end
 		local body
-		if state.log then
+		if state.page == "prompt" and mail.agent and mail.agent.dir then
+			body = prompt_view(mail, state.instructions)
+		elseif state.page == "log" then
 			body = ui.column { grow = true, scroll = true, gap = "small", padding = "large",
 				ui.text { "Every Moonmail tool an agent called, newest first.", class = "agent-hint" },
 				activity_view((mail.agent and mail.agent.activity) or {}),
@@ -158,9 +174,15 @@ return mod {
 		return ui.column { grow = true, gap = "none", class = "agent-panel",
 			ui.row { class = "agent-bar", height = 36, shrink = false, align = "center", gap = "small",
 				ui.icon { name = "bot", size = "small" },
-				ui.text { if state.log then "Agent activity" else "Assistant", weight = "semibold" },
+				ui.text { if state.page == "prompt" then "System prompt" elseif state.page == "log" then "Agent activity" else "Assistant", weight = "semibold" },
 				ui.spacer {},
-				ui.button { icon = "list", small = true, variant = if state.log then "secondary" else "ghost", tooltip = "Agent activity log", msg = "log" },
+				ui.button {
+					if state.page == "prompt" then "Back to chat" else "Prompt",
+					small = true, variant = if state.page == "prompt" then "outline" else "ghost",
+					tooltip = if state.page == "prompt" then "Back to conversation" else "Show system prompt",
+					msg = "prompt",
+				},
+				ui.button { icon = "list", small = true, variant = if state.page == "log" then "outline" else "ghost", tooltip = "Agent activity log", msg = "log" },
 				ui.button { icon = "square-pen", small = true, variant = "ghost", tooltip = "New conversation", msg = "new" },
 			},
 			#approvals > 0 and ui.column { gap = "small", padding = "normal", shrink = false, table.unpack(approvals) },

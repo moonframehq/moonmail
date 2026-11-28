@@ -1200,7 +1200,17 @@ impl Native for Mail {
             .and_then(|()| self.publish(host))
             .map_err(|error| format!("{error:#}"))
     }
-    fn receive(&mut self, host: &Handle, _from: &str, message: Data) {
+    fn receive(&mut self, host: &Handle, from: &str, message: Data) {
+        if message.as_str() == Some("agent_instructions") {
+            host.send(
+                from,
+                Data::map([(
+                    "instructions",
+                    Data::from(crate::agent::workspace::instructions()),
+                )]),
+            );
+            return;
+        }
         self.error.clear();
         let window = self.composer_window_event(&message);
         if let Err(error) = self.handle(message) {

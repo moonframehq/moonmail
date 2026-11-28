@@ -557,6 +557,11 @@ you first, through the agent's own permission prompt. Sending is held by
 Moonmail itself, whatever the agent does: every call, reads included, is
 logged.
 
+Choose **Prompt** in the Assistant header to
+read Moonmail’s workspace instructions and preview the mail context for your
+next message. Choose **Back to chat** to return to the conversation. Each agent
+can also supply its own internal instructions.
+
 **Sending needs your click.** `send_draft` (and `app_action` with `queue`)
 never send. They put a card in the assistant panel showing From, To, Cc, Bcc,
 attachments, subject and body, with **Review**, **Deny** and **Send**. The
