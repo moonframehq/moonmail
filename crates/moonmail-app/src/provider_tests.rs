@@ -17,21 +17,7 @@ pub(super) fn data(value: Value) -> Data {
     }
 }
 
-#[test]
-fn populated_ui_actions_reader_search_draft_and_all_panes() -> Result<()> {
-    let dir = tempfile::tempdir()?;
-    let mut mail =
-        Mail::new(dir.path().to_owned(), true).with_font_config(dir.path().join("ui/style.luau"));
-    let mut archive = Archive::open(dir.path())?;
-    moonmail_store::seed_demo(&mut archive, &FileBlobs::new(dir.path()))?;
-    let mut index = crate::local::open_index(dir.path(), &archive)?;
-    while crate::local::index_batch(&archive, &mut index)? {}
-    mail.index = Some(index);
-    mail.archive = Some(archive);
-    mail.reader_dir = Some(tempfile::tempdir_in(dir.path())?);
-    mail.refresh()?;
-    let id = mail.page.rows[0].id;
-    mail.select(id, true)?;
+fn ui_workspace() -> Result<Workspace> {
     // Use the same toolbox components as the running app, located from Cargo
     // metadata rather than a machine-specific checkout path or copied fixtures.
     let metadata = std::process::Command::new("cargo")
@@ -52,7 +38,7 @@ fn populated_ui_actions_reader_search_draft_and_all_panes() -> Result<()> {
         .and_then(|p| p.parent())
         .context("No toolbox root")?
         .join("app");
-    let mut workspace = Workspace::open(
+    Ok(Workspace::open(
         Roots::bundled(
             toolbox,
             Vec::new(),
@@ -62,7 +48,106 @@ fn populated_ui_actions_reader_search_draft_and_all_panes() -> Result<()> {
             },
         ),
         false,
+    ))
+}
+
+#[test]
+fn assistant_sends_only_changed_mail_context() -> Result<()> {
+    let mut workspace = ui_workspace()?;
+    let mut mail = json!({
+        "agent": { "dir": "/demo" },
+        "selected": { "summary": { "id": 1, "subject": "Hello", "sender": "A", "address": "a@example.test" } },
+        "search": "unread"
+    });
+    workspace.set_host("mail", data(mail.clone()));
+    let instance = "agent-chat#mail-assistant-1";
+    let submit = |workspace: &mut Workspace| -> Result<Option<String>> {
+        workspace.send(
+            "mail-agent",
+            instance,
+            data(json!({"msg":"send","value":"Tell me more"})),
+        );
+        let (_, _, prompt) = workspace
+            .take_outbox()
+            .into_iter()
+            .find(|(provider, _, msg)| provider == "chat" && msg.get("prompt").is_some())
+            .context("No outgoing Assistant prompt")?;
+        Ok(prompt
+            .get("context")
+            .and_then(Data::as_str)
+            .map(str::to_owned))
+    };
+    workspace.send(
+        "provider:chat",
+        "mail-agent",
+        data(json!({"msg":"chat-started","chat":"one"})),
     );
+    let initial = submit(&mut workspace)?.context("No initial context")?;
+    assert!(initial.contains("Open email: message 1"));
+    assert!(initial.contains("Mail view: search unread"));
+    let previous = json!({"kind":{"type":"user","text":format!("<app-context>\n{initial}\n</app-context>\n\nTell me more")}});
+    let mut service =
+        json!({"chats":[{"id":"one","status":"live","transcript":{"entries":[previous]}}]});
+    workspace.set_host("chat", data(service.clone()));
+    assert_eq!(submit(&mut workspace)?, None);
+
+    mail["search"] = json!("flagged");
+    workspace.set_host("mail", data(mail.clone()));
+    assert_eq!(
+        submit(&mut workspace)?.as_deref(),
+        Some("Mail view: search flagged")
+    );
+    mail["search"] = json!("unread");
+    mail["selected"]["summary"]["id"] = json!(2);
+    workspace.set_host("mail", data(mail.clone()));
+    let changed = submit(&mut workspace)?.context("Missing new selection")?;
+    assert!(changed.starts_with("Open email: message 2"));
+    assert!(!changed.contains("Mail view"));
+    // A queued change can be removed before the agent sees it.
+    let frame = format!("<app-context>\n{changed}\n</app-context>\n\nSummarize");
+    service["chats"][0]["transcript"]["queued"] = json!([{ "text": frame }]);
+    workspace.set_host("chat", data(service.clone()));
+    assert_eq!(submit(&mut workspace)?, Some(changed));
+    // Once delivered, this partial update replaces the open email only.
+    service["chats"][0]["transcript"]["queued"] = json!([]);
+    service["chats"][0]["transcript"]["entries"] = json!([
+        previous, {"kind":{"type":"user","text":frame}}
+    ]);
+    workspace.set_host("chat", data(service));
+    assert_eq!(submit(&mut workspace)?, None);
+    mail["selected"] = Value::Null;
+    workspace.set_host("mail", data(mail));
+    assert_eq!(submit(&mut workspace)?.as_deref(), Some("Open email: none"));
+
+    workspace.send(
+        "provider:chat",
+        "mail-agent",
+        data(json!({"msg":"chat-started","chat":"two"})),
+    );
+    assert!(
+        submit(&mut workspace)?
+            .context("Missing new chat context")?
+            .contains("Mail view: search unread")
+    );
+    Ok(())
+}
+
+#[test]
+fn populated_ui_actions_reader_search_draft_and_all_panes() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let mut mail =
+        Mail::new(dir.path().to_owned(), true).with_font_config(dir.path().join("ui/style.luau"));
+    let mut archive = Archive::open(dir.path())?;
+    moonmail_store::seed_demo(&mut archive, &FileBlobs::new(dir.path()))?;
+    let mut index = crate::local::open_index(dir.path(), &archive)?;
+    while crate::local::index_batch(&archive, &mut index)? {}
+    mail.index = Some(index);
+    mail.archive = Some(archive);
+    mail.reader_dir = Some(tempfile::tempdir_in(dir.path())?);
+    mail.refresh()?;
+    let id = mail.page.rows[0].id;
+    mail.select(id, true)?;
+    let mut workspace = ui_workspace()?;
     workspace.set_host("mail", data(mail.snapshot()?));
     assert!(
         workspace.problems().is_empty(),

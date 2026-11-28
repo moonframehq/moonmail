@@ -572,9 +572,12 @@ open a conversation beside your mail. It runs over the Agent Client Protocol
 through Sheprd's `herdr-acp`, as Sheprd's own chats do: one persistent session
 per conversation, which outlives the app and reattaches at the next launch.
 Pick the agent (Claude, Codex, OpenCode, pi, Gemini, Copilot: whatever
-`herdr-acp agents` lists) and its model in the panel's header. Each message
-starts with what you are looking at (the selected and checked messages, the
-folder and the search). When the agent wants to use a tool that writes, the
+`herdr-acp agents` lists) and its model in the panel's header. The first prompt
+includes the open email’s ID, subject and sender, plus the folder, checked
+messages and search. Follow-ups include the open email or
+mail view when it changes. Clearing the selection tells the assistant that no
+email is open. If the earlier context is missing from the recent transcript,
+Moonmail includes it again. When the agent wants to use a tool that writes, the
 panel shows the question with the agent's options (Allow, Always allow,
 Reject). The list button shows the activity log. The panel is Moonframe's
 `agent-chat` component: folded tool runs, a composer that sends on Enter and
