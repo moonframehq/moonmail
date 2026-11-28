@@ -736,15 +736,17 @@ return mod {
 		local no_action = not selected or mail.selected_moving
 		local no_bulk = not selected and (mail.checked_count or 0) == 0
 		local count_summary = tostring(mail.page_count or 0) .. (if mail.threaded then " threads" else " messages") .. (if total_unread > 0 then " · " .. tostring(total_unread) .. " unread" else "")
+		local pager_height = 26
+		local message_pager = ui.row { height = pager_height, class = "mail-table-footer", shrink = false, align = "center",
+			ui.text { tostring(mail.page_count or 0) .. (if mail.threaded then " threads" else " messages") .. " shown", class = "muted" },
+			ui.spacer {}, action("First", "first"),
+			ui.button { label = "Previous", small = true, disabled = not mail.previous, msg = { action = "previous" }, to = "provider:mail" },
+			ui.button { label = "Next", small = true, disabled = not mail.more, msg = { action = "next" }, to = "provider:mail" },
+		}
 		local message_list_pane = ui.column { grow = true, gap = "none",
 			table_header(false, state, mail),
 			rows(mail.rows, mail.anchor, false, mail.list_key or "initial", mail.threaded, columns(mail, false)),
-			ui.row { height = 26, class = "mail-table-footer", shrink = false, align = "center",
-				ui.text { tostring(mail.page_count or 0) .. (if mail.threaded then " threads" else " messages") .. " shown", class = "muted" },
-				ui.spacer {}, action("First", "first"),
-				ui.button { label = "Previous", small = true, disabled = not mail.previous, msg = { action = "previous" }, to = "provider:mail" },
-				ui.button { label = "Next", small = true, disabled = not mail.more, msg = { action = "next" }, to = "provider:mail" },
-			},
+			message_pager,
 		}
 		local correspondence_pane = ui.column { grow = true, gap = "none",
 			ui.row { height = 27, class = "correspondence-title", shrink = false, align = "center",
@@ -756,15 +758,6 @@ return mod {
 			rows(related, selected and selected.summary.id, true, (mail.related_key or "") .. (if mail.related_thread then "-thread" else "-pairs"), false, columns(mail, true)),
 			ui.row { height = 26, shrink = false, action("First", "related_first", { anchor = mail.anchor }), ui.button { label = "Next", small = true, disabled = not mail.related or not mail.related.next, msg = { action = "related_next", anchor = mail.anchor }, to = "provider:mail" } },
 		}
-		local mail_app_list_pane = ui.column { grow = true, gap = "none",
-			mail_app_rows(mail.rows, mail.anchor, mail.list_key or "initial", mail.threaded),
-			ui.row { height = 26, class = "mail-table-footer", shrink = false, align = "center",
-				ui.text { tostring(mail.page_count or 0) .. (if mail.threaded then " threads" else " messages") .. " shown", class = "muted" },
-				ui.spacer {}, action("First", "first"),
-				ui.button { label = "Previous", small = true, disabled = not mail.previous, msg = { action = "previous" }, to = "provider:mail" },
-				ui.button { label = "Next", small = true, disabled = not mail.more, msg = { action = "next" }, to = "provider:mail" },
-			},
-		}
 		-- Panes own one inset border each. Split handles still resize, but
 		-- their overlay hairlines would double borders and disappear behind WebKit.
 		local mail_body
@@ -774,8 +767,13 @@ return mod {
 			mail_body = ui.hsplit { id = "mail-app-columns-v1", divider = false,
 				ui.pane { size = 390, min = 280, max = 640, fixed = true, class = "mail-pane-right",
 					ui.vsplit { id = "mail-app-list-and-correspondence", divider = false,
-						ui.pane { size = 500, min = 200, fixed = true, class = "mail-pane-bottom", mail_app_list_pane },
-						ui.pane { min = 180, correspondence_pane },
+						-- The pager's top border is the draggable edge of the message list.
+						ui.pane { size = 500 - pager_height, min = 200 - pager_height, fixed = true,
+							mail_app_rows(mail.rows, mail.anchor, mail.list_key or "initial", mail.threaded),
+						},
+						ui.pane { min = 180 + pager_height,
+							ui.column { grow = true, gap = "none", message_pager, correspondence_pane },
+						},
 					},
 				},
 				ui.pane { min = 360, reader },
