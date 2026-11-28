@@ -9,6 +9,8 @@
 
 local agent_chat = use "agent-chat"
 
+local MIN_TEXT_SIZE, DEFAULT_TEXT_SIZE, MAX_TEXT_SIZE = 10, 16, 32
+
 local SUGGESTIONS = {
 	"Summarize my unread mail",
 	"What needs a reply from me?",
@@ -111,6 +113,7 @@ return mod {
 	init = function(previous)
 		local state = previous or {}
 		if type(state.generation) ~= "number" then state.generation = 1 end
+		state.text_size = math.clamp(tonumber(state.text_size) or DEFAULT_TEXT_SIZE, MIN_TEXT_SIZE, MAX_TEXT_SIZE)
 		return state
 	end,
 
@@ -120,6 +123,10 @@ return mod {
 			state.chat = nil
 			state.generation += 1
 			state.log = false
+		elseif msg == "larger" then
+			state.text_size = math.min(MAX_TEXT_SIZE, state.text_size + 1)
+		elseif msg == "smaller" then
+			state.text_size = math.max(MIN_TEXT_SIZE, state.text_size - 1)
 		elseif msg == "log" then
 			state.log = not state.log
 		elseif type(msg) == "table" and msg.msg == "chat-started" then
@@ -164,11 +171,13 @@ return mod {
 				ui.icon { name = "bot", size = "small" },
 				ui.text { if state.log then "Agent activity" else "Assistant", weight = "semibold" },
 				ui.spacer {},
+				not state.log and ui.button { "A−", small = true, variant = "ghost", tooltip = "Decrease conversation text size", disabled = state.text_size <= MIN_TEXT_SIZE, msg = "smaller" },
+				not state.log and ui.button { "A+", small = true, variant = "ghost", tooltip = "Increase conversation text size", disabled = state.text_size >= MAX_TEXT_SIZE, msg = "larger" },
 				ui.button { icon = "list", small = true, variant = if state.log then "secondary" else "ghost", tooltip = "Agent activity log", msg = "log" },
 				ui.button { icon = "square-pen", small = true, variant = "ghost", tooltip = "New conversation", msg = "new" },
 			},
 			#approvals > 0 and ui.column { gap = "small", padding = "normal", shrink = false, table.unpack(approvals) },
-			ui.column { grow = true, gap = "none", body },
+			ui.column { grow = true, gap = "none", style = if state.log then nil else { font_size = state.text_size }, body },
 		}
 	end,
 }

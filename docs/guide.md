@@ -568,7 +568,9 @@ waits up to five minutes for your answer, then checks back with
 This holds even for an agent running with permissions bypassed.
 
 **Assistant panel.** Press ⌘J (View › Toggle Assistant, or the bot button) to
-open a conversation beside your mail. It runs over the Agent Client Protocol
+open a conversation beside your mail. Use **A−** or **A+** in the Assistant
+header to resize the current conversation as you read. Moonmail remembers
+the size for future chats. It runs over the Agent Client Protocol
 through Sheprd's `herdr-acp`, as Sheprd's own chats do: one persistent session
 per conversation, which outlives the app and reattaches at the next launch.
 Pick the agent (Claude, Codex, OpenCode, pi, Gemini, Copilot: whatever
