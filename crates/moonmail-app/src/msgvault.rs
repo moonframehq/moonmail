@@ -114,9 +114,41 @@ fn role(name: &str, system: Option<&str>) -> Option<MailboxRole> {
     })
 }
 
+/// Names an original without writing it: msgvault already stores it.
+struct Referenced;
+
+impl moonmail_core::BlobStore for Referenced {
+    type Error = moonmail_store::BlobError;
+
+    fn put(&self, bytes: &[u8]) -> Result<String, Self::Error> {
+        Ok(moonmail_store::content_digest(bytes))
+    }
+
+    fn get(&self, _hash: &str) -> Result<Vec<u8>, Self::Error> {
+        Err(moonmail_store::BlobError::ExternalMissing)
+    }
+}
+
+/// Delete Moonmail's copies of originals msgvault keeps, after checking
+/// msgvault returns the same bytes. Copies another account uses stay.
+pub fn release(archive: &Archive, blobs: &FileBlobs) -> Result<usize> {
+    let (mut after, mut released) = (String::new(), 0);
+    loop {
+        let hashes = archive.releasable_blobs(&after, 1000)?;
+        let Some(last) = hashes.last() else {
+            return Ok(released);
+        };
+        after = last.clone();
+        for hash in &hashes {
+            if blobs.release(hash)? {
+                released += 1;
+            }
+        }
+    }
+}
+
 struct Mirror<'a> {
     archive: &'a mut Archive,
-    blobs: &'a FileBlobs,
     vault: &'a Connection,
     account: &'a MsgvaultAccount,
     roles: HashMap<String, Option<String>>,
@@ -126,7 +158,6 @@ struct Mirror<'a> {
 impl Mirror<'_> {
     fn new<'a>(
         archive: &'a mut Archive,
-        blobs: &'a FileBlobs,
         vault: &'a Connection,
         account: &'a MsgvaultAccount,
     ) -> Result<Mirror<'a>> {
@@ -136,7 +167,6 @@ impl Mirror<'_> {
             .collect::<rusqlite::Result<_>>()?;
         Ok(Mirror {
             archive,
-            blobs,
             vault,
             account,
             roles,
@@ -185,79 +215,129 @@ impl Mirror<'_> {
         Ok(names.join(&SEPARATOR.to_string()))
     }
 
-    /// Mirror messages after the cursor, oldest first. Returns how many arrived.
+    /// Mirror newest first: new arrivals above the cursor, then older mail
+    /// below the backfill mark one batch at a time, checking for arrivals
+    /// between batches. Returns how many messages arrived.
     fn ingest(&mut self, progress: &mut impl FnMut(usize)) -> Result<usize> {
-        let parser = StalwartParser::default();
-        let mut cursor = self.account.cursor;
+        let account = &self.account.account;
+        let (mut cursor, mut backfill) = (self.account.cursor, self.account.backfill);
+        if backfill < 0 {
+            let newest: i64 = self.vault.query_row(
+                "SELECT COALESCE(MAX(id),0) FROM messages WHERE source_id=?1 AND message_type='email'",
+                [self.account.source],
+                |r| r.get(0),
+            )?;
+            self.archive.begin_msgvault(account, newest)?;
+            (cursor, backfill) = (newest, newest + 1);
+        }
         let mut count = 0;
         loop {
-            let batch = {
-                let mut q = self.vault.prepare_cached(
-                    "SELECT id,is_read,deleted_at IS NULL AND deleted_from_source_at IS NULL,
-                     CAST(strftime('%s',COALESCE(internal_date,received_at,sent_at)) AS INTEGER)
-                     FROM messages WHERE source_id=?1 AND id>?2 AND message_type='email'
-                     ORDER BY id LIMIT ?3",
-                )?;
-                q.query_map(rusqlite::params![self.account.source, cursor, BATCH], |r| {
-                    Ok((
-                        r.get::<_, i64>(0)?,
-                        r.get::<_, Option<bool>>(1)?.unwrap_or(true),
-                        r.get::<_, bool>(2)?,
-                        r.get::<_, Option<i64>>(3)?.unwrap_or(0),
-                    ))
-                })?
-                .collect::<rusqlite::Result<Vec<_>>>()?
-            };
-            let Some(last) = batch.last() else {
+            while let Some((last, arrived)) = self.batch(cursor, true)? {
+                cursor = last;
+                count += arrived;
+                progress(count);
+            }
+            if backfill <= 0 {
                 return Ok(count);
+            }
+            match self.batch(backfill, false)? {
+                Some((last, arrived)) => {
+                    backfill = last;
+                    count += arrived;
+                    progress(count);
+                },
+                None => {
+                    self.archive.finish_msgvault_backfill(account)?;
+                    backfill = 0;
+                },
+            }
+        }
+    }
+
+    /// Mirror up to one batch of email above (`newer`) or below `mark`.
+    /// Returns the last msgvault ID processed and how many were mirrored.
+    fn batch(&mut self, mark: i64, newer: bool) -> Result<Option<(i64, usize)>> {
+        let batch = {
+            let mut q = self.vault.prepare_cached(if newer {
+                "SELECT id,is_read,deleted_at IS NULL AND deleted_from_source_at IS NULL,
+                 CAST(strftime('%s',COALESCE(internal_date,received_at,sent_at)) AS INTEGER)
+                 FROM messages WHERE source_id=?1 AND id>?2 AND message_type='email'
+                 ORDER BY id LIMIT ?3"
+            } else {
+                "SELECT id,is_read,deleted_at IS NULL AND deleted_from_source_at IS NULL,
+                 CAST(strftime('%s',COALESCE(internal_date,received_at,sent_at)) AS INTEGER)
+                 FROM messages WHERE source_id=?1 AND id<?2 AND message_type='email'
+                 ORDER BY id DESC LIMIT ?3"
+            })?;
+            q.query_map(rusqlite::params![self.account.source, mark, BATCH], |r| {
+                Ok((
+                    r.get::<_, i64>(0)?,
+                    r.get::<_, Option<bool>>(1)?.unwrap_or(true),
+                    r.get::<_, bool>(2)?,
+                    r.get::<_, Option<i64>>(3)?.unwrap_or(0),
+                ))
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?
+        };
+        let Some(last) = batch.last().map(|row| row.0) else {
+            return Ok(None);
+        };
+        let parser = StalwartParser::default();
+        let mut count = 0;
+        for (id, seen, live, received_at) in batch {
+            let raw = if live { self.raw(id)? } else { None };
+            let Some(raw) = raw else {
+                self.archive.skip_msgvault(&self.account.account, id)?;
+                continue;
             };
-            cursor = last.0;
-            for (id, seen, live, received_at) in batch {
-                let raw = if live { self.raw(id)? } else { None };
-                let Some(raw) = raw else {
+            let labels = self.labels(id)?;
+            let mailboxes = self.mailboxes(&labels)?;
+            let origin = format!("msgvault:{id}");
+            // msgvault keeps the original; Moonmail records where, not a copy.
+            self.archive.reference_external(
+                &moonmail_store::content_digest(&raw),
+                &self.account.database,
+                id,
+            )?;
+            let message = match self.archive.ingest(
+                &parser,
+                &Referenced,
+                IncomingMessage {
+                    account: &self.account.account,
+                    mailbox: mailboxes[0],
+                    origin: &origin,
+                    epoch: 0,
+                    uid: None,
+                    seen,
+                    starred: labels.split(SEPARATOR).any(|label| label == "STARRED"),
+                    received_at,
+                    raw: &raw,
+                },
+            ) {
+                Ok(message) => message,
+                Err(IngestError::Parser(_)) => {
+                    tracing::warn!(id, "msgvault message has unreadable MIME; skipped");
                     self.archive.skip_msgvault(&self.account.account, id)?;
                     continue;
-                };
-                let labels = self.labels(id)?;
-                let mailboxes = self.mailboxes(&labels)?;
-                let origin = format!("msgvault:{id}");
-                let message = match self.archive.ingest(
-                    &parser,
-                    self.blobs,
-                    IncomingMessage {
-                        account: &self.account.account,
-                        mailbox: mailboxes[0],
-                        origin: &origin,
-                        epoch: 0,
-                        uid: None,
-                        seen,
-                        starred: false,
-                        received_at,
-                        raw: &raw,
-                    },
-                ) {
-                    Ok(message) => message,
-                    Err(IngestError::Parser(_)) => {
-                        tracing::warn!(id, "msgvault message has unreadable MIME; skipped");
-                        self.archive.skip_msgvault(&self.account.account, id)?;
-                        continue;
-                    },
-                    Err(error) => return Err(error.into()),
-                };
-                self.archive.record_msgvault(
-                    &self.account.account,
-                    message,
-                    &MsgvaultChange {
-                        vault: id,
-                        seen,
-                        labels: &labels,
-                        mailboxes: Some(&mailboxes),
-                    },
-                )?;
-                count += 1;
+                },
+                Err(error) => return Err(error.into()),
+            };
+            let recorded = self.archive.record_msgvault(
+                &self.account.account,
+                message,
+                &MsgvaultChange {
+                    vault: id,
+                    seen,
+                    labels: &labels,
+                    mailboxes: Some(&mailboxes),
+                },
+            )?;
+            if !recorded {
+                return Ok(None);
             }
-            progress(count);
+            count += 1;
         }
+        Ok(Some((last, count)))
     }
 
     /// The original MIME, or `None` for a message msgvault holds no mail for.
@@ -300,16 +380,23 @@ impl Mirror<'_> {
     /// Follow read state, label and deletion changes for mirrored messages.
     fn reconcile(&mut self) -> Result<usize> {
         let states = self.archive.msgvault_states(&self.account.account)?;
+        if states.is_empty() {
+            return Ok(0);
+        }
         let current = {
             let mut q = self.vault.prepare_cached(
                 "SELECT m.id,m.is_read,m.deleted_at IS NULL AND m.deleted_from_source_at IS NULL,
                  (SELECT group_concat(name,char(31)) FROM (SELECT l.name FROM message_labels ml
                   JOIN labels l ON l.id=ml.label_id WHERE ml.message_id=m.id AND l.name<>'UNREAD'
                   ORDER BY l.name))
-                 FROM messages m WHERE m.source_id=?1 AND m.message_type='email' AND m.id<=?2",
+                 FROM messages m WHERE m.source_id=?1 AND m.message_type='email' AND m.id BETWEEN ?3 AND ?2",
             )?;
             q.query_map(
-                rusqlite::params![self.account.source, self.account.cursor],
+                rusqlite::params![
+                    self.account.source,
+                    self.account.cursor,
+                    self.account.backfill.max(0)
+                ],
                 |r| {
                     Ok((
                         r.get::<_, i64>(0)?,
@@ -371,7 +458,7 @@ pub fn sync(
     let mut errors = Vec::new();
     for account in archive.msgvault_accounts()? {
         let result = open(Path::new(&account.database)).and_then(|vault| {
-            let mut mirror = Mirror::new(archive, &blobs, &vault, &account)?;
+            let mut mirror = Mirror::new(archive, &vault, &account)?;
             let fresh = mirror.reconcile()?;
             let arrived = mirror.ingest(&mut |count| progress(&account.account, count))?;
             Ok(fresh + arrived)
@@ -380,6 +467,10 @@ pub fn sync(
             Ok(count) => changed += count,
             Err(error) => errors.push(format!("{}: {error:#}", account.account)),
         }
+    }
+    let released = release(archive, &blobs)?;
+    if released > 0 {
+        tracing::info!(released, "released copies msgvault keeps");
     }
     anyhow::ensure!(errors.is_empty(), "{}", errors.join("\n"));
     Ok(changed)

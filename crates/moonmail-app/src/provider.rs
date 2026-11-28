@@ -41,10 +41,16 @@ mod navigation;
 mod navigation_tests;
 #[path = "provider_outbox.rs"]
 mod outbox;
+#[path = "provider_outside.rs"]
+mod outside;
+pub(crate) use outside::AGENT_ACTIONS;
 #[path = "provider_partitions.rs"]
 mod partitions;
 #[path = "provider_reader.rs"]
 mod reader;
+#[cfg(all(feature = "capture", target_os = "macos"))]
+#[path = "provider_reader_bench.rs"]
+pub(crate) mod reader_bench;
 #[path = "provider_relationships.rs"]
 mod relationships;
 #[path = "provider_rules.rs"]
@@ -115,16 +121,19 @@ pub struct Mail {
     plain_url: String,
     reader_links: crate::reader_resources::ReaderLinks,
     reader_images: String,
+    image_state: reader::ImageState,
     reader_dir: Option<tempfile::TempDir>,
     preferences: crate::fonts::Preferences,
     font_config: PathBuf,
     reader_revision: u64,
+    documents: crate::reader_backend::DocumentSlot,
     font_families: Vec<String>,
     font_preview_url: String,
     font_preview_revision: u64,
     discovery: Option<crate::account_setup::Discovery>,
     discovery_job: Option<Receiver<std::result::Result<crate::account_setup::Discovery, String>>>,
     discovery_error: String,
+    outside: outside::Outside,
 }
 
 impl Mail {
@@ -177,16 +186,19 @@ impl Mail {
             plain_url: String::new(),
             reader_links: crate::reader_resources::ReaderLinks::default(),
             reader_images: String::new(),
+            image_state: Default::default(),
             reader_dir: None,
             preferences: crate::fonts::Preferences::default(),
             font_config: crate::fonts::path(demo),
             reader_revision: 0,
+            documents: Default::default(),
             font_families: Vec::new(),
             font_preview_url: String::new(),
             font_preview_revision: 0,
             discovery: None,
             discovery_job: None,
             discovery_error: String::new(),
+            outside: outside::Outside::default(),
         }
     }
     pub fn with_font_config(mut self, path: PathBuf) -> Self {
@@ -260,51 +272,23 @@ impl Mail {
     }
 
     fn select(&mut self, id: MessageId, anchor: bool) -> Result<()> {
-        self.reader_revision = self.reader_revision.wrapping_add(1);
         if self.preferences.mark_read && !self.archive()?.has_pending_move(id)? {
             self.archive_mut()?.set_flag(id, "seen", true)?;
             self.flush_messages(&[id])?;
         }
         let detail = self.archive()?.detail(id)?;
         let links = crate::reader_resources::links(&detail.text, detail.html.as_deref())?;
-        let dir = self
-            .reader_dir
+        if self
+            .selected
             .as_ref()
-            .context("Reader directory is missing")?;
-        let path = dir.path().join(format!("plain-{}.html", id.0 % 2));
-        std::fs::write(
-            &path,
-            crate::page::plain_with_font(&detail.text, &self.preferences.reader),
-        )?;
-        self.plain_url = url::Url::from_file_path(path)
-            .map_err(|_| anyhow::anyhow!("Invalid reader path"))?
-            .to_string();
-        self.plain_url.push_str(&format!(
-            "?message={}&revision={}",
-            id.0, self.reader_revision
-        ));
-        self.html_url.clear();
-        if let Some(html) = &detail.html {
-            let dir = self
-                .reader_dir
-                .as_ref()
-                .context("Reader directory is missing")?;
-            // Two rotating files keep disk use bounded while changing the URL.
-            let path = dir.path().join(format!("message-{}.html", id.0 % 2));
-            std::fs::write(
-                &path,
-                crate::page::html_with_font(html, &self.preferences.reader),
-            )?;
-            self.html_url = url::Url::from_file_path(path)
-                .map_err(|_| anyhow::anyhow!("Invalid reader path"))?
-                .to_string();
-            self.html_url.push_str(&format!(
-                "?message={}&revision={}",
-                id.0, self.reader_revision
-            ));
+            .is_none_or(|current| current.summary.id != id)
+        {
+            self.image_state.reset();
         }
+        self.prepare_reader(&detail)?;
         self.selected = Some(detail);
         self.reader_links = links;
+        self.auto_load_images();
         self.reader_images.clear();
         self.attachments.clear();
         self.attachment_message = None;
@@ -360,7 +344,14 @@ impl Mail {
             "discovery":self.discovery,"discovering":self.discovery_job.is_some(),"discovery_error":self.discovery_error,
         });
         snapshot["account"] = json!(self.query.account);
+        snapshot["msgvault_accounts"] =
+            json!(archive
+            .msgvault_accounts()?
+            .into_iter()
+            .map(|account| json!({"account":account.account,"importing":account.backfill != 0}))
+            .collect::<Vec<_>>());
         snapshot["outbox_more"] = json!(outbox.next.is_some());
+        self.outside_snapshot(&mut snapshot)?;
         self.sender_snapshot(&mut snapshot)?;
         if let Some(rows) = snapshot["drafts"]["rows"].as_array_mut() {
             for row in rows {
@@ -407,7 +398,11 @@ impl Mail {
         let move_selection = self.move_selection();
         snapshot["move_account"] = json!(self.move_account(&move_selection)?);
         snapshot["move_selection"] = json!(move_selection);
+        snapshot["reader_revision"] = json!(self.reader_revision);
         snapshot["reader_links"] = json!(self.reader_links);
+        snapshot["remote_images"] = self
+            .image_state
+            .notice(&self.reader_links.image_urls, self.demo);
         snapshot["reader_images"] = json!(self.reader_images);
         snapshot["thread_warnings"] = json!(
             self.selected
@@ -511,6 +506,47 @@ impl Mail {
         Ok(())
     }
 
+    /// Freeze a draft into the outbox; `send` starts delivery at once.
+    fn queue_draft(&mut self, draft: Draft, send: bool) -> Result<()> {
+        if send && self.demo {
+            bail!("Sending is disabled in the synthetic demo");
+        }
+        if send && self.job.is_some() {
+            bail!("Wait for the current network operation to finish");
+        }
+        let account = if self.demo && draft.account == "you@example.com" {
+            Account::fastmail("you@example.com")?
+        } else {
+            Account::load_for(&self.root, &draft.account)?
+                .context("Reconnect this draft's sending account or choose another From account")?
+        };
+        let (raw, recipients) = moonmail_network::prepare_message_with_attachments(
+            &account,
+            &draft,
+            &FileBlobs::attachments(&self.root),
+        )?;
+        let blob = FileBlobs::new(&self.root).put(&raw)?;
+        let parsed =
+            moonmail_core::MimeParser::parse(&moonmail_mime::StalwartParser::default(), &raw)?;
+        let id = self.archive_mut()?.queue_with_message_id(
+            &draft,
+            &account.email,
+            &blob,
+            &recipients,
+            parsed.message_id.as_deref(),
+        )?;
+        if self.draft.as_ref().is_some_and(|open| open.id == draft.id) {
+            self.draft = None;
+        }
+        self.outbox_before = None;
+        if send {
+            self.launch(move |root, _| Ok(moonmail_network::send_queued(&root, id)?))?;
+        } else {
+            self.status = "Queued locally. Open Outbox to send, edit, or cancel.".into();
+        }
+        Ok(())
+    }
+
     fn handle(&mut self, message: Data) -> Result<()> {
         let text = |key| {
             message
@@ -531,6 +567,7 @@ impl Mail {
             "people" => self.people = self.archive()?.frequent_correspondents(30)?,
             "partition_open" | "partition_field" | "partition_first" | "partition_next"
             | "partition_choose" => self.handle_partition(&action, &message)?,
+            "agent_request" => self.handle_agent_request(&message)?,
             "rule_save" | "rule_delete" | "rule_apply" | "rule_first" | "rule_next" => {
                 self.handle_rule(&action, &message)?
             },
@@ -919,6 +956,15 @@ impl Mail {
                             .parse()
                             .context("Enter a reader font size between 8 and 32")?,
                     },
+                    reader_renderer: match text("reader_renderer").as_str() {
+                        "" => self.preferences.reader_renderer,
+                        name => serde_json::from_value(json!(name))
+                            .context("Unknown reader renderer")?,
+                    },
+                    load_remote_images: message
+                        .get("load_remote_images")
+                        .and_then(Data::as_bool)
+                        .unwrap_or(self.preferences.load_remote_images),
                     threaded: message
                         .get("threaded")
                         .and_then(Data::as_bool)
@@ -950,6 +996,9 @@ impl Mail {
                 settings.apply_fonts(&self.font_config)?;
                 settings.save(&self.root)?;
 
+                if self.preferences.load_remote_images && !settings.load_remote_images {
+                    self.image_state.clear_remote();
+                }
                 self.query.threaded = settings.threaded;
                 self.query.before = None;
                 self.expanded.clear();
@@ -1003,7 +1052,9 @@ impl Mail {
             },
             "attachments" | "attachment_save" | "message_save" | "messages_save"
             | "draft_attach" | "draft_detach" => self.handle_attachment(&action, &message)?,
-            "reader_link" | "reader_images" => self.handle_reader(&action, &message)?,
+            "reader_link" | "reader_images" | "reader_remote_images" => {
+                self.handle_reader(&action, &message)?
+            },
             "related_first" | "related_next" | "related_sort" | "related_mode" => {
                 self.handle_relationship(&action, &message)?
             },
@@ -1027,37 +1078,7 @@ impl Mail {
                     draft.id == text("id"),
                     "This compose view is stale; reopen the intended draft"
                 );
-                let account = if self.demo && draft.account == "you@example.com" {
-                    Account::fastmail("you@example.com")?
-                } else {
-                    Account::load_for(&self.root, &draft.account)?.context(
-                        "Reconnect this draft's sending account or choose another From account",
-                    )?
-                };
-                let (raw, recipients) = moonmail_network::prepare_message_with_attachments(
-                    &account,
-                    &draft,
-                    &FileBlobs::attachments(&self.root),
-                )?;
-                let blob = FileBlobs::new(&self.root).put(&raw)?;
-                let parsed = moonmail_core::MimeParser::parse(
-                    &moonmail_mime::StalwartParser::default(),
-                    &raw,
-                )?;
-                let id = self.archive_mut()?.queue_with_message_id(
-                    &draft,
-                    &account.email,
-                    &blob,
-                    &recipients,
-                    parsed.message_id.as_deref(),
-                )?;
-                self.draft = None;
-                self.outbox_before = None;
-                if action == "queue" {
-                    self.launch(move |root, _| Ok(moonmail_network::send_queued(&root, id)?))?;
-                } else {
-                    self.status = "Queued locally. Open Outbox to send, edit, or cancel.".into();
-                }
+                self.queue_draft(draft, action == "queue")?;
             },
             "send" => {
                 let id = message
@@ -1097,6 +1118,24 @@ impl Mail {
                 let path = PathBuf::from(paths[0].as_str().context("Invalid Maildir path")?);
                 self.launch(move |root, _| crate::live_maildir::attach(&root, &path))?;
                 self.status = "Connecting live Maildir…".into();
+            },
+            "msgvault_remove" => {
+                let account = text("account");
+                self.launch(move |root, _| {
+                    Archive::open(&root)?.remove_msgvault(&account)?;
+                    Ok(())
+                })?;
+                self.status = "Removing msgvault account…".into();
+            },
+            "msgvault_restore" => {
+                self.launch(move |root, _| {
+                    Archive::open(&root)?.forget_removed_msgvault()?;
+                    let database = crate::msgvault::locate()
+                        .context("No msgvault archive found in $MSGVAULT_HOME or ~/.msgvault")?;
+                    crate::msgvault::detect(&root, &database)?;
+                    Ok(())
+                })?;
+                self.status = "Looking for msgvault accounts…".into();
             },
             "mail_import" => {
                 let Some(Data::List(paths)) = message.get("paths") else {
@@ -1139,6 +1178,7 @@ impl Mail {
         self.index = Some(crate::local::open_index(&self.root, &archive)?);
         self.draft = archive.latest_draft()?;
         self.archive = Some(archive);
+        self.watch_outside()?;
         self.start_maildir()?;
         if self.preferences.sync_paused {
             self.workers.pause();
@@ -1178,7 +1218,13 @@ impl Native for Mail {
         }
     }
     fn tick(&mut self, host: &Handle) {
-        let mut changed = false;
+        let mut changed = match self.poll_images() {
+            Ok(changed) => changed,
+            Err(error) => {
+                self.error = format!("{error:#}");
+                true
+            },
+        };
         let mut done = false;
         if let Some(receiver) = &self.discovery_job {
             match receiver.try_recv() {
@@ -1238,7 +1284,14 @@ impl Native for Mail {
                 self.error = format!("{error:#}");
             }
         }
-        let mut maildir_changed = false;
+        let mut maildir_changed = match self.outside_changes() {
+            Ok(outside) => outside,
+            Err(error) => {
+                self.error = format!("{error:#}");
+                true
+            },
+        };
+        changed |= maildir_changed;
         if let Some(worker) = &self.maildir {
             for event in worker.events.try_iter() {
                 changed = true;
@@ -1290,10 +1343,12 @@ impl Native for Mail {
                     }
                     self.checked.remove(&selected.summary.id);
                     self.selected = None;
+                    self.image_state.reset();
                     self.attachments.clear();
                     self.attachment_message = None;
                     self.reader_links = Default::default();
                     self.reader_images.clear();
+                    self.documents.replace(Default::default());
                     self.html_url.clear();
                     self.plain_url.clear();
                 },
@@ -1316,6 +1371,9 @@ impl Native for Mail {
         }
         if changed && let Err(error) = self.refresh().and_then(|()| self.publish(host)) {
             host.fail(format!("{error:#}"));
+        }
+        if let Some(event) = self.outside.composer.take() {
+            host.send("mail-composer", event.into());
         }
     }
 }

@@ -152,6 +152,14 @@ interface, and **Helvetica 12** for the reader. The interface and lists share a
 size; the reader has its own. Changes apply live. Threaded-list and mark-as-read
 preferences are saved too. System/Light/Dark appearance uses Moonframe's setting.
 
+**Settings → Reading & Lists → Message renderer** changes the open message immediately.
+The choice is stored as `"reader_renderer": "native"` or `"reader_renderer": "webkit"`
+in the archive’s `preferences.json`. Existing and new profiles default to WebKit.
+Native draws selectable text, headings, table rows and styled boxes directly in GPUI.
+It keeps the selected message in memory. Complex layouts can differ from WebKit,
+and oversized or deeply nested documents fall back to text. Both renderers block
+remote resources. **Embedded images** explicitly loads local raster attachments.
+
 **Settings → Reading & Lists → Message columns** controls main-list column order,
 visibility, and widths. From, Date, and To can be hidden; Subject stays visible
 and fills the remaining space. To displays recipients without sorting. Fixed
@@ -540,6 +548,121 @@ To run locally with the same four secrets already exported in your shell:
 MOONMAIL_LIVE_GMAIL=1 cargo test --locked -p moonmail-network --test gmail_live gmail_round_trip -- --ignored --exact --nocapture
 ```
 
+## Assistant, agent CLI, and MCP
+
+Agents can do anything you can do in Moonmail: read and search, file, tag and
+flag, write rules and saved searches, manage folders and accounts, write and
+send email, and drive the window itself. Tools that change mail or the app ask
+you first, through the agent's own permission prompt. Sending is held by
+Moonmail itself, whatever the agent does: every call, reads included, is
+logged.
+
+**Sending needs your click.** `send_draft` (and `app_action` with `queue`)
+never send. They put a card in the assistant panel showing From, To, Cc, Bcc,
+attachments, subject and body, with **Review**, **Deny** and **Send**. The
+panel opens by itself while one waits. Send approves exactly what the card
+shows: if the draft changed since, nothing goes out and the card says so. An
+agent edit to the draft cancels its pending send; a denial is final. The agent
+waits up to five minutes for your answer, then checks back with
+`request_status`. Agents cannot send from the Outbox (`send`, `outbox_retry`).
+This holds even for an agent running with permissions bypassed.
+
+**Assistant panel.** Press ⌘J (View › Toggle Assistant, or the bot button) to
+open a conversation beside your mail. It runs over the Agent Client Protocol
+through Sheprd's `herdr-acp`, as Sheprd's own chats do: one persistent session
+per conversation, which outlives the app and reattaches at the next launch.
+Pick the agent (Claude, Codex, OpenCode, pi, Gemini, Copilot: whatever
+`herdr-acp agents` lists) and its model in the panel's header. Each message
+starts with what you are looking at (the selected and checked messages, the
+folder and the search). When the agent wants to use a tool that writes, the
+panel shows the question with the agent's options (Allow, Always allow,
+Reject). The list button shows the activity log. The panel is Moonframe's
+`agent-chat` component: folded tool runs, a composer that sends on Enter and
+recalls earlier prompts, `/` commands, the queue, and mode, model and effort
+pickers. `herdr-acp` is found on PATH or inside Sheprd.app; set `program` in
+`app/providers/chat/provider.toml` to use another.
+
+**The agent folder.** The agent works in `<archive>/agent/`, rewritten at each
+launch (or by `moonmail agent setup`):
+
+| File | For |
+| --- | --- |
+| `AGENTS.md`, `CLAUDE.md` | How to work, and every tool, from the tool table |
+| `moonmail` | The CLI bound to this archive |
+| `.mcp.json`, `.claude/settings.json` | Claude Code: the MCP server; read tools allowed, write tools ask |
+| `opencode.json` | OpenCode's MCP server |
+| `.gemini/settings.json` | Gemini CLI's MCP server (it asks before each call) |
+| `.codex/config.toml` | Codex's MCP server, once Codex trusts the folder |
+
+pi has no MCP client; it reads `AGENTS.md` and runs `./moonmail agent` in its
+shell.
+
+**Tools.** `moonmail agent help` lists them; `moonmail agent tools` prints
+their JSON Schemas. Highlights:
+
+- Mail: `search`, `message`, `thread`, `correspondence`, `set_flag`,
+  `set_keyword`, `move`, `copy`, `mark_thread`.
+- Organizing: `rules`, `rule_preview`, `rule_save`, `rule_apply`,
+  `rule_delete`, `save_search`, folder create, rename and delete.
+- Writing: `create_draft` (new, reply or forward; opens in the composer),
+  `update_draft`, `send_draft` (waits for your Send), `delete_draft`, `outbox`, `request_status`.
+- The window: `show_message`, `show_search`, `open_draft`, `sync`,
+  `app_state` (what the window shows) and `app_action`, which does what a
+  click does: moving around and selecting, filing and tagging, composing and
+  editing drafts, rules, folders and sync (`compose`, `draft`, `folder`,
+  `filter`, `layout`, `rule_save`...). It takes an allow-list. Actions that
+  open a file picker (attach, save, import), change accounts, credentials,
+  identities or settings, open links, delete permanently, or send stay your
+  own clicks. The send card lists every attached file with its size.
+- Accounts: `accounts`, `add_account` (browser sign-in).
+
+**Agent CLI.** `moonmail agent TOOL --param value` prints one JSON document. It
+runs beside the open app without its lock, as a second SQLite client using the
+same store methods as the UI.
+
+```sh
+moonmail agent search --query 'from:clara is:unread' --limit 5
+moonmail agent create_draft --reply-to 42 --body 'Thursday works.'
+moonmail agent update_draft --id DRAFT --append 'See you then.'
+moonmail agent send_draft --id DRAFT
+moonmail agent app_action --action filter --args '{"value":"unread"}'
+moonmail agent activity
+```
+
+**MCP for outside agents.** `moonmail mcp` serves the same tools over stdio
+(JSON-RPC, MCP 2024-11-05 through 2025-06-18). Tools that only look carry
+`readOnlyHint`; clients ask before the others.
+
+```sh
+claude mcp add moonmail -- moonmail mcp           # Claude Code
+moonmail agent setup                              # prints the server command
+```
+
+For OpenCode, add the server to `opencode.json`:
+`"mcp": { "moonmail": { "type": "local", "command": ["moonmail", "mcp"] } }`.
+
+**Log and live updates.** Every tool call is logged in the archive's
+`activity` table with its source (`cli` or `mcp`), tool, whether it writes,
+and its outcome; see the panel's log or `moonmail agent activity`. The app
+polls SQLite's `PRAGMA data_version` on its 250 ms tick, which moves only when
+another connection commits. On a change it refreshes the list, reader and open
+composer. A new write shows `Agent: …` in the status bar, starts syncing added
+accounts, and uploads queued flag, keyword and move changes. Window tools
+(`show_*`, `open_draft`, `sync`, `app_state`, `app_action`) are requests in
+`agent_requests` that the open app answers within a tick; without the app
+they fail after 10 seconds.
+
+**Limits.**
+- Asking before writes other than sending is the agent's job. Moonmail marks
+  the tools and configures Claude Code to ask, but an agent run with
+  permissions bypassed changes mail without asking. pi asks for nothing.
+- Search reads the index the app last built; mail that arrived while the app
+  was closed is searchable after the app or `moonmail sync` indexes it.
+- A log entry is written after its call finishes, not in the same transaction.
+- While you type in a draft the agent is also editing, the last save wins.
+- `add_account` supports browser (OAuth) sign-in only; password servers are
+  set up in Settings or with `moonmail password`.
+
 ## See a msgvault archive
 
 Moonmail finds a [msgvault](https://github.com/wesm/msgvault) archive the way
@@ -548,15 +671,24 @@ its `config.toml`. When you open Moonmail, each msgvault source that holds
 email becomes an account named **msgvault** followed by its address. Chats and
 other non-email sources are left out.
 
-A background worker copies each message's original MIME into Moonmail's
-archive, oldest first, and shows its progress in the status bar. A large
-archive takes a while the first time: about 30 messages a second, so roughly
-45 minutes for 85,000 messages. Messages whose bytes Moonmail already holds,
-such as the same account synced over IMAP or JMAP, share one copy on disk. The
-import resumes where it stopped after a quit. Run `moonmail msgvault` to mirror
-from the command line instead.
+A background worker indexes each message into Moonmail's archive, newest
+first, and shows its progress in the status bar. The original MIME stays in
+msgvault: Moonmail stores subjects, addresses, folders and the search index,
+and reads a message's original from msgvault's database when you open, export
+or reply to it, checking its SHA-256. Copies an earlier version made are
+deleted once msgvault returns the same bytes, unless another account uses
+them. If msgvault later loses a message's original, the message stays listed
+but cannot be opened. Mail that
+arrives in msgvault meanwhile is picked up between batches of older mail. A
+large archive takes a while the first time: about 30 messages a second, so
+roughly 45 minutes for 85,000 messages. Mail that another account, such as
+the same mailbox over IMAP or JMAP, downloads keeps its own copy. The import resumes where it stopped after a quit. Run `moonmail msgvault`
+to mirror from the command line instead.
 
-Under **Sources**, click an account's name to see only that account's mail, so a mailbox synced both directly and through msgvault does not show twice. The role groups under **Mailboxes** (Inbox, Archive, Sent, Junk, Trash) list each account separately, and **All Messages** shows every account together, duplicates included.
+Under **Sources**, click an account's name to see only that account's mail, so a mailbox synced both directly and through msgvault does not show twice. The role groups under **Mailboxes** (Inbox, Archive, Sent, Junk, Trash) list each account separately, and **All Messages**, Unread, Flagged and search show every account together.
+A message that a msgvault account and another account both hold appears there
+once, from the other account. Copies match on Message-ID, sender, subject and
+body text, so a different message that reuses a Message-ID hides nothing.
 
 msgvault labels and IMAP folders become mailboxes, and a message without one
 appears in **All Mail**. After each msgvault sync, Moonmail follows its folder
@@ -564,7 +696,14 @@ changes, read state and deletions. A deleted message leaves every folder; its
 original stays in the archive. Moonmail opens msgvault's database read-only and
 never writes to it, so moves and folder edits are refused for these accounts.
 Marking a message read in Moonmail lasts until msgvault reports a new read
-state. Set `MOONMAIL_MSGVAULT=0` to turn detection off.
+state. Gmail stars, kept by msgvault as the STARRED label, become flags.
+
+To hide a msgvault account, choose **Remove** next to it in **Settings →
+Accounts**, or run `moonmail msgvault remove "msgvault ADDRESS"`. Its mail
+leaves every view and detection skips it from then on; the originals stay in
+the archive. **Find msgvault Accounts** in Settings, or `moonmail msgvault
+restore`, adds removed accounts again. Set `MOONMAIL_MSGVAULT=0` to turn
+detection off entirely.
 
 ## Share a live Maildir with Mutt and mbsync
 
@@ -705,8 +844,19 @@ live views; original bytes remain in the archive.
   yet. Outgoing files use `application/octet-stream`; servers may impose lower
   message limits. Removing/discarding files leaves unreferenced local blobs;
   garbage collection is not implemented yet.
-- HTML is sanitized with Ammonia and restrictive CSP. Scripts, forms, navigation,
-  and remote images are blocked. **Links…** lists explicit HTTP(S) targets for
+- The reader opens the formatted alternative when available and falls back to plain text.
+  Local stylesheet rules and inline styles preserve headings, table colors, card borders,
+  shadows and padding. Stylesheet matching is limited to messages up to 256 KiB of HTML.
+  Larger messages still use inline styles. External stylesheets are disabled.
+  Both backends sanitize HTML with Ammonia. WebKit also enforces a restrictive CSP. Scripts, forms, navigation,
+  and external stylesheets are blocked. Remote images are off by default.
+  **Load images** allows downloads for the selected email until you leave it.
+  **Settings → Reading & Lists → Automatically load remote images** applies to each
+  email you open. Fetching an image can reveal your IP address and read time to the sender.
+  Both renderers receive locally decoded PNGs. Downloads use public HTTP(S) image
+  sources on standard ports, omit cookies and referrers, and skip private networks.
+  Moonmail checks the first 512 KiB of HTML for up to 16 distinct image sources.
+  **Links…** lists explicit HTTP(S) targets for
   opening in the system browser (100 links, first 512 KiB per alternative).
   **Embedded images** decodes local CID PNG/JPEG/GIF/WebP to static PNG; duplicate
   or missing CIDs are not guessed. Limits: 16 images, 2 MiB per input/output,
@@ -759,11 +909,31 @@ pinned stable compiler.
 just format
 just ci                    # rustfmt/Taplo, Clippy, workspace tests
 just bench-check           # exercise all workloads once; no timing claims
+just bench-reader          # native GPUI vs WebKit, macOS
 just bench                 # Criterion comparisons
 just bench mime-owned
 just bench index-batch
 just bench search-warm
 ```
+
+The macOS reader benchmark selects messages from a temporary SQLite archive. It
+uses a 720 × 480 point reader, real GPUI text shaping and offscreen GPU drawing,
+and a persistent offscreen WKWebView. Each sample adds provider selection time
+to the time to obtain a rendered snapshot. It excludes application launch, Luau
+event delivery, display refresh, benchmark IPC and PNG encoding. It times
+one warm-up round and 20 measured rounds per backend and message, alternating
+backend order. The app crate is optimized at level 3 using the development
+profile. Raw microsecond samples and synthetic screenshots are written under
+`target/reader-bench/`. A loopback listener checks for unexpected image requests.
+
+Warm timings pooled across three runs on an Apple M1 Ultra (macOS 27.0.1),
+60 samples per cell, in milliseconds:
+
+| Synthetic message | Native p50 / p95 | WebKit p50 / p95 |
+| --- | ---: | ---: |
+| Plain text | 5.42 / 10.69 | 7.95 / 42.01 |
+| Styled receipt | 6.16 / 10.73 | 10.40 / 27.23 |
+| 60-section newsletter | 11.24 / 19.36 | 10.24 / 57.60 |
 
 For visual layout checks on macOS, use `just screenshot` or
 `just screenshot target/screenshots/compose.png compose` (also `settings`,

@@ -54,7 +54,9 @@ screenshots:
         python3 scripts/capture.py "docs/screenshots/$view.png" "$view"
     done
     for view in mail search-results; do
-        swift scripts/reader_shot.swift "$PWD/docs/screenshots/$view.plain_url.html" target/reader.png 841 343
+        reader="$PWD/docs/screenshots/$view.html_url.html"
+        [[ -f "$reader" ]] || reader="$PWD/docs/screenshots/$view.plain_url.html"
+        swift scripts/reader_shot.swift "$reader" target/reader.png 841 343
         magick "docs/screenshots/$view.png" \( target/reader.png -resize 1682x686! \) -geometry +1318+1148 -composite "docs/screenshots/$view.png"
     done
     rm -f docs/screenshots/*.html
@@ -96,6 +98,12 @@ ci: format-check
 
 bench *args:
     cargo bench --locked -p moonmail-bench --bench backends -- {{args}}
+
+# Compare warm message selection through a readable offscreen snapshot on macOS.
+bench-reader:
+    mkdir -p target/reader-bench
+    swiftc -O scripts/reader_bench.swift -o target/reader-bench/webkit-peer
+    cargo --config 'profile.dev.package.moonmail-app.opt-level=3' run --locked -p moonmail-app --features capture -- reader-bench target/reader-bench target/reader-bench/webkit-peer
 
 bench-check:
     cargo bench --locked -p moonmail-bench --bench backends -- --test

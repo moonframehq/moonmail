@@ -1,7 +1,7 @@
 use {moonmail_store::Archive, rusqlite::Connection};
 
 #[test]
-fn v26_upgrade_preserves_queued_and_uncertain_imap_deletions()
+fn v30_upgrade_preserves_queued_and_uncertain_imap_deletions()
 -> Result<(), Box<dyn std::error::Error>> {
     let dir = tempfile::tempdir()?;
     drop(Archive::open(dir.path())?);
@@ -20,7 +20,7 @@ fn v26_upgrade_preserves_queued_and_uncertain_imap_deletions()
     sql.execute_batch(
         "INSERT INTO expunge_operations(id,account,mailbox,epoch,uid,state) VALUES
         (12,'fixture','Deleted',42,1,'queued'),(13,'fixture','Deleted',42,2,'unknown');
-        PRAGMA user_version=26;",
+        PRAGMA user_version=30;",
     )?;
     drop(sql);
     let db = Archive::open(dir.path())?;

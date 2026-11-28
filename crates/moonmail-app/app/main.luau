@@ -56,6 +56,16 @@ local function table_header(related, state, mail)
 	}
 end
 
+local function first_sync_prompt(mail)
+	if not mail.account or #(mail.mailboxes or {}) > 0 then return nil end
+	local paused = (mail.preferences or {}).sync_paused
+	if not paused and mail.sync_schedule ~= "Manual" then return nil end
+	return ui.column { grow = true, padding = "large", justify = "center", align = "center",
+		ui.text { if paused then "Sync is paused" else "Ready for your first sync", tone = "muted" },
+		action(if paused then "Resume sync" else "Sync now", "sync"),
+	}
+end
+
 local function rows(messages, selected_id, related, key, threaded, layout)
 	local items = messages or {}
 	if #items == 0 then
@@ -361,14 +371,16 @@ return mod {
 			{ label = "Moonmail Layout", msg = { action = "layout", value = "moonmail" }, to = "provider:mail", shortcut = "secondary-3" },
 			"-",
 			{ label = "Toggle Sidebar", msg = "toggle-sidebar", shortcut = "secondary-alt-s" },
+			{ label = "Toggle Assistant", msg = "toggle-agent", shortcut = "secondary-j" },
 		} },
 	},
-	init = function(previous) return { query = "", email = "", pane = "mail", rich = false, thread = false, focus = false, sidebar_hidden = false, closed = if previous then previous.closed or {} else {}, related_sort = "date", related_ascending = false } end,
+	init = function(previous) return { query = "", email = "", pane = "mail", rich = true, thread = false, focus = false, sidebar_hidden = false, closed = if previous then previous.closed or {} else {}, related_sort = "date", related_ascending = false, agent_open = if previous then previous.agent_open == true else false } end,
 	update = function(state, msg)
 		if msg == "compose" or msg == "reply" or msg == "reply_all" or msg == "forward" or msg == "forward_text" then
 			return state, { { to = "provider:mail", msg = { action = msg } } }
 		elseif msg == "settings" then return state, { { to = "settings", msg = "open" } }
 		elseif msg == "toggle-sidebar" then state.sidebar_hidden = not state.sidebar_hidden
+		elseif msg == "toggle-agent" then state.agent_open = not state.agent_open
 		elseif msg == "mail" or msg == "outbox" or msg == "organize" or msg == "operations" or msg == "drafts" or msg == "links" or msg == "identities" or msg == "searches" or msg == "folders" then
 			state.pane = msg
 			return state, { { to = "provider:mail", msg = { action = "partition_close" } } }
@@ -442,7 +454,7 @@ return mod {
 					state.query = msg.source or ""; state.search_name = msg.name or ""; state.search_sources = table.clone(msg.sources or {})
 				end
 				if msg.action == "outbox_sent" then state.pane = "mail" end
-				if msg.action == "reader_images" then state.rich = true end
+				if msg.action == "reader_images" or msg.action == "reader_remote_images" then state.rich = true end
 				if msg.action == "attachments" then state.pane = "attachments" end
 				if msg.action == "draft_discard" then state.pane = "drafts" end
 				if msg.action == "folder" then state.query = "" end
@@ -725,12 +737,20 @@ return mod {
 				},
 				ui.row { class = "reader-notice", height = 27, shrink = false, align = "center",
 					ui.icon { name = "shield", size = "small" },
-					ui.text { if selected.html and state.rich then "HTML · External resources blocked" else "Plain text", size = "small" },
-					ui.spacer {}, ui.button { label = "Save .eml…", small = true, variant = "ghost", msg = { save_message = selected.summary.id } }, ui.button { label = "Links…", small = true, variant = "ghost", msg = "links" }, ui.button { label = "Attachments…", small = true, variant = "ghost", msg = { action = "attachments", message = selected.summary.id } }, ui.button { label = "Embedded images", small = true, variant = "ghost", msg = { action = "reader_images", message = selected.summary.id }, disabled = not selected.html }, ui.button { label = if state.rich then "Plain text" else "HTML", small = true, variant = "ghost", msg = "rich", disabled = not selected.html },
+					ui.text { if selected.html and state.rich then "HTML" else "Plain text", size = "small" },
+					ui.spacer {}, ui.button { label = "Save .eml…", small = true, variant = "ghost", msg = { save_message = selected.summary.id } }, ui.button { label = "Links…", small = true, variant = "ghost", msg = "links" }, ui.button { label = "Attachments…", small = true, variant = "ghost", msg = { action = "attachments", message = selected.summary.id } }, ui.button { label = "Embedded images", small = true, variant = "ghost", msg = { action = "reader_images", message = selected.summary.id }, disabled = not selected.html }, ui.button { label = if state.rich and selected.html then "Plain text" else "HTML", small = true, variant = "ghost", msg = "rich", disabled = not selected.html },
 				},
+				if state.rich and selected.html and mail.remote_images and mail.remote_images.present then
+					ui.row { class = "reader-notice", height = 30, shrink = false, align = "center",
+						ui.text { mail.remote_images.status, size = "small" }, ui.spacer {},
+						if mail.remote_images.can_load then ui.button { label = "Load images", small = true,
+							msg = { action = "reader_remote_images", message = selected.summary.id } } else nil,
+					} else nil,
 				if mail.reader_images and mail.reader_images ~= "" then ui.text { mail.reader_images, size = "small", tone = "muted" } else nil,
 				if #(mail.thread_warnings or {}) > 0 then ui.text { table.concat(mail.thread_warnings, "\n"), size = "small", tone = "muted" } else nil,
-				ui.column { grow = true, ui.browser { id = "message-reader", url = if state.rich and mail.html_url ~= "" then mail.html_url else mail.plain_url } },
+				ui.column { grow = true, if mail.preferences and mail.preferences.reader_renderer == "native" then
+					ui.view { name = "mail-reader", id = "message-reader-native", props = { revision = mail.reader_revision, rich = state.rich and selected.html } }
+				else ui.browser { id = "message-reader", url = if state.rich and mail.html_url ~= "" then mail.html_url else mail.plain_url } },
 			} else ui.column { class = "form", ui.text { "No message selected", tone = "muted" } }
 		end
 		local no_action = not selected or mail.selected_moving
@@ -745,7 +765,7 @@ return mod {
 		}
 		local message_list_pane = ui.column { grow = true, gap = "none",
 			table_header(false, state, mail),
-			rows(mail.rows, mail.anchor, false, mail.list_key or "initial", mail.threaded, columns(mail, false)),
+			first_sync_prompt(mail) or rows(mail.rows, mail.anchor, false, mail.list_key or "initial", mail.threaded, columns(mail, false)),
 			message_pager,
 		}
 		local correspondence_pane = ui.column { grow = true, gap = "none",
@@ -769,7 +789,7 @@ return mod {
 					ui.vsplit { id = "mail-app-list-and-correspondence", divider = false,
 						-- The pager's top border is the draggable edge of the message list.
 						ui.pane { size = 500 - pager_height, min = 200 - pager_height, fixed = true,
-							mail_app_rows(mail.rows, mail.anchor, mail.list_key or "initial", mail.threaded),
+							first_sync_prompt(mail) or mail_app_rows(mail.rows, mail.anchor, mail.list_key or "initial", mail.threaded),
 						},
 						ui.pane { min = 180 + pager_height,
 							ui.column { grow = true, gap = "none", message_pager, correspondence_pane },
@@ -787,6 +807,15 @@ return mod {
 						ui.pane { min = 320, reader },
 					},
 				},
+			}
+		end
+		-- The assistant (mods/mail-agent) beside the mail, ⌘J; it opens by
+		-- itself while a send the agent asked for waits for the user.
+		local waiting = mail.agent and mail.agent.approvals and #mail.agent.approvals > 0
+		if state.agent_open or waiting then
+			mail_body = ui.hsplit { id = "mail-agent-split-v1", divider = false,
+				ui.pane { min = 480, class = "mail-pane-right", mail_body },
+				ui.pane { size = 380, min = 300, max = 640, fixed = true, ui.mount "mail-agent" },
 			}
 		end
 		local alerts = ui.column { gap = "none", shrink = false,
@@ -829,6 +858,7 @@ return mod {
 					flat_tool("list-tree", if mail.threaded then "Show individual messages" else "Group messages into expandable threads", { action = "threaded" }, "provider:mail", false, mail.threaded),
 					flat_tool("refresh-cw", "Sync · ⌘R", { action = "sync" }, "provider:mail", mail.busy or mail.demo, false, "muted-foreground"),
 					search_field("mail-search-box", 210, 28, "Search messages", state),
+					flat_tool("bot", "Assistant · ⌘J", "toggle-agent", nil, false, state.agent_open, "muted-foreground"),
 					ui.mount "feedback",
 				},
 				alerts,
@@ -896,6 +926,7 @@ return mod {
 									sq_btn("refresh-cw", "Sync · ⌘R", { action = "sync" }, "provider:mail", mail.busy or mail.demo)
 								),
 								search_field("mail-search-sq", 185, 30, "Search", state),
+								sq_btn("bot", "Assistant · ⌘J", "toggle-agent", nil, false, state.agent_open, "muted-foreground"),
 								ui.mount "feedback",
 							},
 							alerts,
@@ -972,6 +1003,7 @@ return mod {
 									capsule_btn("refresh-cw", "Sync · ⌘R", { action = "sync" }, "provider:mail", mail.busy or mail.demo)
 								),
 								search_field("mail-search-pill", 190, 32, "Search", state),
+								circle_btn("bot", "Assistant · ⌘J", "toggle-agent", nil, false, state.agent_open),
 								ui.mount "feedback",
 							},
 							alerts,

@@ -103,6 +103,21 @@ pub fn dispatch(root: &Path, args: &[String]) -> Result<bool> {
             moonmail_network::sync_account(root, |status| println!("{status}"))?;
             crate::local::index_all(root)?;
         },
+        "msgvault" if args.get(1).is_some_and(|arg| arg == "remove") => {
+            let account = args
+                .get(2)
+                .context("Usage: moonmail msgvault remove ACCOUNT (see `moonmail status`)")?;
+            Archive::open(root)?.remove_msgvault(account)?;
+            println!("Removed {account}. Run `moonmail msgvault restore` to add it again.");
+        },
+        "msgvault" if args.get(1).is_some_and(|arg| arg == "restore") => {
+            Archive::open(root)?.forget_removed_msgvault()?;
+            let database = crate::msgvault::locate()
+                .context("No msgvault archive found in $MSGVAULT_HOME or ~/.msgvault")?;
+            for account in crate::msgvault::detect(root, &database)? {
+                println!("Connected {account}.");
+            }
+        },
         "msgvault" => {
             let mut archive = Archive::open(root)?;
             anyhow::ensure!(
@@ -206,7 +221,7 @@ pub fn dispatch(root: &Path, args: &[String]) -> Result<bool> {
             println!("Demo archive, search journal, pagination, reader and Correspondence passed.");
         },
         "--help" | "help" => println!(
-            "Moonmail\n\n  (no arguments)                Open the mail client\n  login EMAIL [PROVIDER]         Browser OAuth + PKCE; provider inferred from domain\n  password EMAIL [PROVIDER]      Verify IMAP/SMTP and store an app password\n  connect ACCOUNT.json           Connect custom IMAP/SMTP using a hidden password prompt\n  oauth-client PROVIDER FILE     Import Google/Microsoft desktop client JSON into Keychain\n  sync                          Sync all accounts and finish pending Sent copies\n  import PATH                   Read Maildir, mboxrd, or .eml files\n  msgvault                      Mirror the detected msgvault archive now\n  export ID PATH                Save original bytes as a new .eml file\n  export-many DIR IDs            Export up to 100 originals into a new folder\n  reindex                       Replay the search journal\n  status                        Show local archive counts\n  disconnect [EMAIL]            Disconnect one account; retain local mail\n  --check                       Isolated Moonframe UI validation\n\nProviders: fastmail, google, microsoft, icloud, yahoo, aol, other.\nGoogle browser login uses an imported or packaged desktop OAuth client. Microsoft requires an imported client.\nmsgvault is found through $MSGVAULT_HOME or ~/.msgvault and mirrored read-only; MOONMAIL_MSGVAULT=0 turns detection off.\nMOONMAIL_DATA_DIR overrides the archive directory. MOONMAIL_DEMO=1 selects synthetic demo mail."
+            "Moonmail\n\n  (no arguments)                Open the mail client\n  login EMAIL [PROVIDER]         Browser OAuth + PKCE; provider inferred from domain\n  password EMAIL [PROVIDER]      Verify IMAP/SMTP and store an app password\n  connect ACCOUNT.json           Connect custom IMAP/SMTP using a hidden password prompt\n  oauth-client PROVIDER FILE     Import Google/Microsoft desktop client JSON into Keychain\n  sync                          Sync all accounts and finish pending Sent copies\n  import PATH                   Read Maildir, mboxrd, or .eml files\n  msgvault                      Mirror the detected msgvault archive now\n  msgvault remove ACCOUNT       Hide a msgvault account and stop detecting it\n  msgvault restore              Detect msgvault accounts removed earlier\n  export ID PATH                Save original bytes as a new .eml file\n  export-many DIR IDs            Export up to 100 originals into a new folder\n  reindex                       Replay the search journal\n  status                        Show local archive counts\n  agent [TOOL --param value]    JSON tools for agents; works while the app is open\n  mcp                           Serve the agent tools over MCP (stdio)\n  disconnect [EMAIL]            Disconnect one account; retain local mail\n  --check                       Isolated Moonframe UI validation\n\nProviders: fastmail, google, microsoft, icloud, yahoo, aol, other.\nGoogle browser login uses an imported or packaged desktop OAuth client. Microsoft requires an imported client.\nmsgvault is found through $MSGVAULT_HOME or ~/.msgvault and mirrored read-only; MOONMAIL_MSGVAULT=0 turns detection off.\nMOONMAIL_DATA_DIR overrides the archive directory. MOONMAIL_DEMO=1 selects synthetic demo mail."
         ),
         value if value.starts_with('-') || matches!(value, "bundle" | "mockup" | "mockups") => {
             return Ok(false);

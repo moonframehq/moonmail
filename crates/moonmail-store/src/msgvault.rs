@@ -12,8 +12,12 @@ pub struct MsgvaultAccount {
     pub account: String,
     pub database: String,
     pub source: i64,
-    /// Every msgvault message up to this ID is mirrored or deliberately skipped.
+    /// Every msgvault message from `backfill` up to this ID is mirrored or
+    /// deliberately skipped; newer messages arrive above it.
     pub cursor: i64,
+    /// -1 before the first import, 0 once older mail is complete, otherwise
+    /// the lowest ID mirrored while importing newest first.
+    pub backfill: i64,
 }
 
 /// What Moonmail last observed in msgvault for one mirrored message.
@@ -47,7 +51,8 @@ pub(crate) fn check_editable(db: &rusqlite::Connection, account: &str) -> Result
 }
 
 impl Archive {
-    /// Returns whether the account is new. A source already mirrored keeps its cursor.
+    /// Returns whether the account is new. A source already mirrored keeps its
+    /// cursor, and a source the user removed stays removed.
     pub fn register_msgvault(
         &mut self,
         account: &str,
@@ -55,15 +60,68 @@ impl Archive {
         source: i64,
     ) -> Result<bool> {
         Ok(self.connection.execute(
-            "INSERT INTO msgvault_accounts(account,database,source) VALUES (?1,?2,?3)
+            "INSERT INTO msgvault_accounts(account,database,source,backfill)
+             SELECT ?1,?2,?3,-1 WHERE NOT EXISTS(
+                 SELECT 1 FROM msgvault_dismissed WHERE database=?2 AND source=?3)
              ON CONFLICT DO NOTHING",
             params![account, database, source],
         )? > 0)
     }
 
+    /// Start a newest-first import at `newest`, the highest msgvault ID now.
+    pub fn begin_msgvault(&self, account: &str, newest: i64) -> Result<()> {
+        self.connection.execute(
+            "UPDATE msgvault_accounts SET cursor=?2,backfill=?2+1 WHERE account=?1 AND backfill<0",
+            params![account, newest],
+        )?;
+        Ok(())
+    }
+
+    pub fn finish_msgvault_backfill(&self, account: &str) -> Result<()> {
+        self.connection.execute(
+            "UPDATE msgvault_accounts SET backfill=0 WHERE account=?1 AND backfill>0",
+            [account],
+        )?;
+        Ok(())
+    }
+
+    /// Hide a mirrored account and stop detecting its source. Originals stay
+    /// in the archive; `forget_removed_msgvault` lets detection add it again.
+    pub fn remove_msgvault(&mut self, account: &str) -> Result<()> {
+        let tx = self.connection.transaction()?;
+        if tx.execute(
+            "INSERT OR IGNORE INTO msgvault_dismissed
+             SELECT database,source FROM msgvault_accounts WHERE account=?1",
+            [account],
+        )? == 0
+            && !tx.query_row(
+                "SELECT EXISTS(SELECT 1 FROM msgvault_accounts WHERE account=?1)",
+                [account],
+                |r| r.get::<_, bool>(0),
+            )?
+        {
+            return Err(Error::Invalid("No msgvault account has this name"));
+        }
+        tx.execute(
+            "DELETE FROM occurrences WHERE mailbox_id IN (SELECT id FROM mailboxes WHERE account=?1)",
+            [account],
+        )?;
+        tx.execute("UPDATE mailboxes SET active=0 WHERE account=?1", [account])?;
+        tx.execute("DELETE FROM msgvault_messages WHERE account=?1", [account])?;
+        tx.execute("DELETE FROM msgvault_accounts WHERE account=?1", [account])?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    pub fn forget_removed_msgvault(&self) -> Result<()> {
+        self.connection
+            .execute("DELETE FROM msgvault_dismissed", [])?;
+        Ok(())
+    }
+
     pub fn msgvault_accounts(&self) -> Result<Vec<MsgvaultAccount>> {
         let mut q = self.connection.prepare(
-            "SELECT account,database,source,cursor FROM msgvault_accounts ORDER BY account",
+            "SELECT account,database,source,cursor,backfill FROM msgvault_accounts ORDER BY account",
         )?;
         Ok(q.query_map([], |r| {
             Ok(MsgvaultAccount {
@@ -71,6 +129,7 @@ impl Archive {
                 database: r.get(1)?,
                 source: r.get(2)?,
                 cursor: r.get(3)?,
+                backfill: r.get(4)?,
             })
         })?
         .collect::<rusqlite::Result<_>>()?)
@@ -88,17 +147,34 @@ impl Archive {
     }
 
     /// Publish a message's msgvault folders and advance the cursor atomically.
+    /// Returns false, and hides the message, once the account was removed.
     /// The message itself was ingested before, so a retry finds it by origin.
     pub fn record_msgvault(
         &mut self,
         account: &str,
         message: MessageId,
         change: &MsgvaultChange<'_>,
-    ) -> Result<()> {
+    ) -> Result<bool> {
         let tx = self.connection.transaction()?;
         let id = message.0 as i64;
+        let exists: bool = tx.query_row(
+            "SELECT EXISTS(SELECT 1 FROM msgvault_accounts WHERE account=?1)",
+            [account],
+            |r| r.get(0),
+        )?;
+        if !exists {
+            // Removed while this message was being mirrored: undo its ingest.
+            tx.execute(
+                "DELETE FROM occurrences WHERE message_id=?1
+                 AND mailbox_id IN (SELECT id FROM mailboxes WHERE account=?2)",
+                params![id, account],
+            )?;
+            tx.execute("UPDATE mailboxes SET active=0 WHERE account=?1", [account])?;
+            tx.commit()?;
+            return Ok(false);
+        }
         for mailbox in change.mailboxes.unwrap_or_default() {
-            add_occurrence(&tx, *mailbox, id, change.seen)?;
+            add_occurrence(&tx, *mailbox, id, change.seen, starred(change.labels))?;
         }
         tx.execute(
             "INSERT INTO msgvault_messages VALUES (?1,?2,?3,?4,?5)
@@ -107,7 +183,7 @@ impl Archive {
         )?;
         advance(&tx, account, change.vault)?;
         tx.commit()?;
-        Ok(())
+        Ok(true)
     }
 
     /// Advance past a msgvault message that has no mail to mirror.
@@ -159,7 +235,13 @@ impl Archive {
                     params![id, account, serde_json::to_string(mailboxes)?],
                 )?;
                 for mailbox in mailboxes {
-                    add_occurrence(&tx, *mailbox, id, change.seen)?;
+                    add_occurrence(&tx, *mailbox, id, change.seen, starred(change.labels))?;
+                }
+                if starred(&old.labels) != starred(change.labels) {
+                    tx.execute(
+                        "UPDATE occurrences SET flagged=?2 WHERE message_id=?1",
+                        params![id, starred(change.labels)],
+                    )?;
                 }
             }
             if old.seen != change.seen {
@@ -178,12 +260,23 @@ impl Archive {
     }
 }
 
-fn add_occurrence(tx: &rusqlite::Connection, mailbox: i64, id: i64, seen: bool) -> Result<()> {
+/// Gmail keeps stars as the STARRED label.
+fn starred(labels: &str) -> bool {
+    labels.split('\u{1f}').any(|label| label == "STARRED")
+}
+
+fn add_occurrence(
+    tx: &rusqlite::Connection,
+    mailbox: i64,
+    id: i64,
+    seen: bool,
+    starred: bool,
+) -> Result<()> {
     if tx.execute(
         "INSERT INTO occurrences(mailbox_id,message_id,epoch,seen,flagged)
-         VALUES (?1,?2,0,?3,COALESCE((SELECT MAX(flagged) FROM occurrences WHERE message_id=?2),0))
+         VALUES (?1,?2,0,?3,MAX(?4,COALESCE((SELECT MAX(flagged) FROM occurrences WHERE message_id=?2),0)))
          ON CONFLICT(mailbox_id,message_id) DO NOTHING",
-        params![mailbox, id, seen],
+        params![mailbox, id, seen, starred],
     )? > 0
     {
         crate::rules::on_entry(tx, mailbox, MessageId(id as u64))?;
@@ -191,9 +284,11 @@ fn add_occurrence(tx: &rusqlite::Connection, mailbox: i64, id: i64, seen: bool) 
     Ok(())
 }
 
+/// New mail raises the cursor; the newest-first import lowers the backfill.
 fn advance(db: &rusqlite::Connection, account: &str, vault: i64) -> Result<()> {
     db.execute(
-        "UPDATE msgvault_accounts SET cursor=MAX(cursor,?2) WHERE account=?1",
+        "UPDATE msgvault_accounts SET cursor=MAX(cursor,?2),
+         backfill=CASE WHEN backfill>?2 THEN ?2 ELSE backfill END WHERE account=?1",
         params![account, vault],
     )?;
     Ok(())

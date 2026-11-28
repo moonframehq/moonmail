@@ -34,4 +34,3 @@ BEGIN
     INSERT INTO jmap_deletion_revisions VALUES(NEW.mailbox_id,1)
     ON CONFLICT(mailbox) DO UPDATE SET revision=revision+1;
 END;
-PRAGMA user_version=27;

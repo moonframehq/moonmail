@@ -97,7 +97,7 @@ just ci
 - **msgvault** archives are found automatically in `$MSGVAULT_HOME` or `~/.msgvault` and mirrored read-only, one account per email source, with msgvault's folders, read state and deletions kept current. [msgvault setup](docs/guide.md#see-a-msgvault-archive).
 - **Local import** supports nested Maildir and Maildir++ folders, mboxrd and length-framed mbox, and individual or grouped EML files from the Mail menu and CLI.
 - **Reading**: threads, Correspondence, and sanitized HTML with remote images
-  blocked.
+  blocked by default. Load images for one message or enable automatic loading in Reading & Lists.
 - **Search**: fields, Boolean operators, saved searches and partitions, on a
   local index.
 - **Writing**: separate composer windows, identities, signatures, attachments
@@ -106,6 +106,14 @@ just ci
   rules, with every remote change queued and visible.
 - **Make it yours**: restyle it in Settings, or ask a coding agent to change it
   while it runs.
+- **Assistant**: a chat panel (⌘J) running Claude, Codex, OpenCode, pi or
+  Gemini over ACP, through Sheprd's `herdr-acp`. It can do anything you can do in
+  Moonmail, asks before anything that writes, never sends without your click,
+  and logs every step.
+  [Assistant and agent tools](docs/guide.md#assistant-agent-cli-and-mcp).
+- **Agent tools**: the same tools for any agent, as `moonmail mcp` (stdio MCP
+  server) or `moonmail agent` (JSON CLI), while the app is open; the window
+  updates as each change lands.
 
 ## What it does not do yet
 

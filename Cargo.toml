@@ -26,6 +26,7 @@ base64                   = "0.22"
 chrono                   = { default-features = false, features = ["std"], version = "0.4" }
 core-text                = "21"
 criterion                = "0.8"
+css-inline               = { default-features = false, version = "0.25" }
 flate2                   = "1"
 fs2                      = "0.4"
 html2text                = "0.16"
@@ -33,12 +34,13 @@ image                    = { default-features = false, features = ["gif", "jpeg"
 imap                     = "=3.0.0-alpha.15"
 imap-codec               = { default-features = false, features = ["ext_condstore_qresync", "starttls"], version = "=2.0.0-alpha.10" }
 imap-proto               = "0.16.7"
+kuchikiki                = "=0.8.8-speedreader"
 linkify                  = "0.10"
 mail-builder             = "2"
 mail-parser              = { features = ["full_encoding"], version = "1.0.1" }
 mail-send                = { default-features = false, features = ["aws_lc_rs", "tls12"], version = "0.7" }
 mailparse                = "0.18"
-moonframe                = { default-features = false, features = ["acp", "browser", "markdown", "studio"], git = "https://github.com/moonframehq/moonframe", rev = "0a98dffd238bf0ab6c1dae9343eae8776ce9cbaf" }
+moonframe                = { default-features = false, features = ["acp", "browser", "chat", "markdown", "studio"], git = "https://github.com/moonframehq/moonframe", rev = "7163be303a2917263890b1be6caef32406d95f74" }
 moonmail-core            = { path = "crates/moonmail-core" }
 moonmail-mime            = { path = "crates/moonmail-mime" }
 moonmail-network         = { path = "crates/moonmail-network" }

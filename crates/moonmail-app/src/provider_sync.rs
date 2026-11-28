@@ -95,6 +95,13 @@ impl Workers {
         }
     }
 
+    /// Wake every account's worker to upload queued changes.
+    pub fn flush_all(&self) {
+        for connection in self.accounts.values() {
+            connection.worker.flush();
+        }
+    }
+
     pub fn pause(&mut self) {
         self.paused = true;
         for connection in self.accounts.values() {
