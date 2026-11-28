@@ -114,6 +114,14 @@ fn assistant_sends_only_changed_mail_context() -> Result<()> {
     service["chats"][0]["transcript"]["queued"] = json!([{ "text": frame }]);
     workspace.set_host("chat", data(service.clone()));
     assert_eq!(submit(&mut workspace)?, Some(changed));
+    // Reselect the delivered email while a different one is queued. The agent
+    // needs email 1 again in case the queued prompt runs before this follow-up.
+    mail["selected"]["summary"]["id"] = json!(1);
+    workspace.set_host("mail", data(mail.clone()));
+    assert_eq!(submit(&mut workspace)?.as_deref(), initial.lines().next());
+
+    mail["selected"]["summary"]["id"] = json!(2);
+    workspace.set_host("mail", data(mail.clone()));
     // Once delivered, this partial update replaces the open email only.
     service["chats"][0]["transcript"]["queued"] = json!([]);
     service["chats"][0]["transcript"]["entries"] = json!([
