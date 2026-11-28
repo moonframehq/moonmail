@@ -39,3 +39,35 @@ fn v30_upgrade_preserves_queued_and_uncertain_imap_deletions()
     assert!(db.jmap_deletions("fixture", 100)?.is_empty());
     Ok(())
 }
+
+#[test]
+fn early_jmap_v27_keeps_uncertain_deletions_and_installs_main_migrations()
+-> Result<(), Box<dyn std::error::Error>> {
+    let dir = tempfile::tempdir()?;
+    drop(Archive::open(dir.path())?);
+    let sql = Connection::open(dir.path().join("archive.sqlite3"))?;
+    sql.execute_batch(
+        "DROP TABLE agent_requests; DROP TABLE activity; DROP TABLE external_blobs;
+         DROP TABLE msgvault_dismissed; ALTER TABLE msgvault_accounts DROP COLUMN backfill;
+         INSERT INTO expunge_operations(id,account,mailbox,epoch,uid,state,remote_folder,confirmed_role)
+         VALUES(42,'fixture','Deleted',0,1,'unknown','t','trash');
+         PRAGMA user_version=27;",
+    )?;
+    let db = Archive::open(dir.path())?;
+    let history = db.remote_operations(None)?;
+    assert!(
+        history
+            .iter()
+            .any(|op| op.id == 42 && op.state == "unknown")
+    );
+    assert_eq!(
+        sql.query_row(
+            "SELECT count(*) FROM pragma_table_info('msgvault_accounts') WHERE name='backfill'",
+            [],
+            |r| r.get::<_, u32>(0)
+        )?,
+        1
+    );
+    assert_eq!(sql.query_row("SELECT count(*) FROM sqlite_schema WHERE type='table' AND name IN ('activity','agent_requests','external_blobs','msgvault_dismissed')", [], |r| r.get::<_, u32>(0))?, 4);
+    Ok(())
+}
