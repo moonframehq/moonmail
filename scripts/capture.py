@@ -257,7 +257,7 @@ def main():
             agent = (repo / "crates/moonmail-app/app/mods/mail-agent/main.luau").read_text()
             replacements = {
                 "local mail = app.mail or {}": "local mail = " + luau(snapshot),
-                "started = \"chat-started\",": "started = \"chat-started\", view = " + luau(ASSISTANT_CHAT) + ",",
+                "suggestions = SUGGESTIONS,": "suggestions = SUGGESTIONS, view = " + luau(ASSISTANT_CHAT) + ",",
             }
             for before, after in replacements.items():
                 if agent.count(before) != 1:

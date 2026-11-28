@@ -80,7 +80,7 @@ fn assistant_sends_only_changed_mail_context() -> Result<()> {
     workspace.send(
         "provider:chat",
         "mail-agent",
-        data(json!({"msg":"chat-started","chat":"one"})),
+        data(json!({"msg":"chat-started","generation":1,"chat":"one"})),
     );
     let initial = submit(&mut workspace)?.context("No initial context")?;
     assert!(initial.contains("Open email: message 1"));
@@ -136,13 +136,111 @@ fn assistant_sends_only_changed_mail_context() -> Result<()> {
     workspace.send(
         "provider:chat",
         "mail-agent",
-        data(json!({"msg":"chat-started","chat":"two"})),
+        data(json!({"msg":"chat-started","generation":1,"chat":"two"})),
     );
     assert!(
         submit(&mut workspace)?
             .context("Missing new chat context")?
             .contains("Mail view: search unread")
     );
+    Ok(())
+}
+
+#[test]
+fn assistant_inspects_delivered_prompts_and_starts_a_fresh_chat() -> Result<()> {
+    let mut workspace = ui_workspace()?;
+    workspace.set_host(
+        "mail",
+        data(json!({
+            "agent": {"dir": "/demo"}, "search": "current-selection"
+        })),
+    );
+    let started = data(json!({"msg":"chat-started","generation":1,"chat":"old"}));
+    workspace.send("provider:chat", "mail-agent", started.clone());
+    workspace.set_host("chat", data(json!({"chats":[
+        {"id":"other","transcript":{"entries":[{"kind":{"type":"user","text":"different-chat"}}]}},
+        {"id":"old","status":"live","transcript":{
+            "entries":[
+                {"kind":{"type":"user","text":"<app-context>\nMail view: search original-selection\n</app-context>\n\nfirst question"}},
+                {"kind":{"type":"agent","text":"assistant-reply"}},
+                {"kind":{"type":"user","text":"follow-up question"}}
+            ],
+            "queued":[{"text":"queued-question"}]
+        }}
+    ]})));
+    let panel = |workspace: &Workspace| -> Result<String> {
+        let slot = workspace.slot("mail-agent").context("Missing Assistant")?;
+        Ok(format!(
+            "{:?}",
+            slot.view()
+                .context("Missing Assistant view")?
+                .snapshot()
+                .tree
+        ))
+    };
+    workspace.send("shell", "mail-agent", "prompt".into());
+    let history = panel(&workspace)?;
+    assert!(
+        history
+            .find("follow-up question")
+            .context("Missing follow-up")?
+            < history
+                .find("first question")
+                .context("Missing original prompt")?
+    );
+    assert!(history.contains("<app-context>") && history.contains("original-selection"));
+    for absent in [
+        "current-selection",
+        "assistant-reply",
+        "queued-question",
+        "different-chat",
+    ] {
+        assert!(!history.contains(absent), "{absent}");
+    }
+
+    workspace.send("shell", "mail-agent", "new".into());
+    // A delayed notification from the first instance cannot reclaim the panel.
+    workspace.send("provider:chat", "mail-agent", started);
+    workspace.send("shell", "mail-agent", "prompt".into());
+    let empty = panel(&workspace)?;
+    assert!(empty.contains("No prompt sent yet."));
+    assert!(!empty.contains("original-selection"));
+    workspace.send("shell", "mail-agent", "prompt".into());
+    workspace.take_outbox();
+    workspace.send(
+        "mail-agent",
+        "agent-chat#mail-assistant-2",
+        data(json!({"msg":"send","value":"New question"})),
+    );
+    let (_, instance, start) = workspace
+        .take_outbox()
+        .into_iter()
+        .find(|(to, _, msg)| to == "chat" && msg.get("start").is_some())
+        .context("New chat did not start a session")?;
+    assert_eq!(start.get("cwd").and_then(Data::as_str), Some("/demo"));
+    workspace.send(
+        "provider:chat",
+        &instance,
+        data(json!({"reply":"agent-chat-start","ok":true,"chat":"fresh"})),
+    );
+    let (_, _, sent) = workspace
+        .take_outbox()
+        .into_iter()
+        .find(|(to, _, msg)| to == "chat" && msg.get("prompt").is_some())
+        .context("First prompt was not sent")?;
+    assert_eq!(sent.get("chat").and_then(Data::as_str), Some("fresh"));
+    assert_eq!(
+        sent.get("prompt").and_then(Data::as_str),
+        Some("New question")
+    );
+    assert!(
+        sent.get("context")
+            .and_then(Data::as_str)
+            .context("Missing fresh mail context")?
+            .contains("current-selection")
+    );
+    workspace.send("shell", "mail-agent", "prompt".into());
+    assert!(panel(&workspace)?.contains("Waiting for the conversation transcript"));
     Ok(())
 }
 

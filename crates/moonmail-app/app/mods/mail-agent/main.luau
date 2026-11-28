@@ -74,14 +74,14 @@ local function needs_field(transcript, label, current)
 	return true
 end
 
-local function context(mail, chats, id)
-	local transcript
+local function current_transcript(chats, id)
 	for _, chat in chats or {} do
-		if chat.id == id then
-			transcript = chat.transcript
-			break
-		end
+		if chat.id == id then return chat.transcript end
 	end
+	return nil
+end
+
+local function context(mail, transcript)
 	local selected = mail.selected and mail.selected.summary
 	local message = field("Open email", if selected
 		then `message {selected.id} “{selected.subject}” from {selected.sender} <{selected.address}>`
@@ -147,13 +147,30 @@ local function activity_view(activity)
 	return ui.column { gap = "small", table.unpack(rows) }
 end
 
-local function prompt_view(next_context, guide)
-	return ui.column { grow = true, scroll = true, padding = "large", gap = "small",
-		ui.text { "Context for the next message", weight = "semibold" },
-		ui.text { next_context or "Mail context is unchanged.", wrap = true },
-		ui.text { "Moonmail workspace instructions", weight = "semibold" },
-		ui.markdown { text = guide or "Loading instructions…" },
-	}
+local function prompt_view(transcript, guide, chat_id)
+	local rows = {}
+	local entries = if transcript then transcript.entries or {} else {}
+	for index = #entries, 1, -1 do
+		local entry = entries[index].kind
+		if entry.type == "user" then
+			table.insert(rows, ui.text { if #rows == 0 then "Last sent prompt" else "Earlier sent prompt", weight = "semibold" })
+			table.insert(rows, ui.text { entry.text, wrap = true })
+			if (entry.files or 0) > 0 then
+				table.insert(rows, ui.text { `Attached files: {entry.files}`, class = "agent-hint" })
+			end
+		end
+	end
+	if #rows == 0 then
+		local hint = if chat_id and not transcript then "Waiting for the conversation transcript…"
+			elseif transcript and (transcript.hidden or 0) > 0 then "No sent prompt in the recent transcript."
+			else "No prompt sent yet."
+		table.insert(rows, ui.text { hint, class = "agent-hint" })
+	elseif (transcript.hidden or 0) > 0 then
+		table.insert(rows, ui.text { "Older transcript entries are unavailable.", class = "agent-hint" })
+	end
+	table.insert(rows, ui.text { "Moonmail workspace instructions", weight = "semibold" })
+	table.insert(rows, ui.markdown { text = guide or "Loading instructions…" })
+	return ui.column { grow = true, scroll = true, padding = "large", gap = "small", table.unpack(rows) }
 end
 
 return mod {
@@ -191,7 +208,7 @@ return mod {
 			end
 		elseif type(msg) == "table" and type(msg.instructions) == "string" then
 			state.instructions = msg.instructions
-		elseif type(msg) == "table" and msg.msg == "chat-started" then
+		elseif type(msg) == "table" and msg.msg == "chat-started" and msg.generation == state.generation then
 			state.chat = msg.chat
 		elseif type(msg) == "table" and msg.msg == "link" and type(msg.url) == "string" then
 			return state, { { to = "app:open", msg = msg.url } }
@@ -205,10 +222,10 @@ return mod {
 		for _, ask in (mail.agent and mail.agent.approvals) or {} do
 			table.insert(approvals, approval_view(ask))
 		end
-		local next_context = context(mail, app.chat and app.chat.chats, state.chat)
+		local transcript = current_transcript(app.chat and app.chat.chats, state.chat)
 		local body
-		if state.page == "prompt" and mail.agent and mail.agent.dir then
-			body = prompt_view(next_context, state.instructions)
+		if state.page == "prompt" then
+			body = prompt_view(transcript, state.instructions, state.chat)
 		elseif state.page == "log" then
 			body = ui.column { grow = true, scroll = true, gap = "small", padding = "large",
 				ui.text { "Every Moonmail tool an agent called, newest first.", class = "agent-hint" },
@@ -223,29 +240,31 @@ return mod {
 				id = `mail-assistant-{state.generation}`,
 				chat = state.chat,
 				cwd = mail.agent.dir,
-				context = next_context,
+				context = context(mail, transcript),
 				title = "Ask about your mail",
 				placeholder = "Ask about your mail…",
 				suggestions = SUGGESTIONS,
-				started = "chat-started",
+				started = { msg = "chat-started", generation = state.generation },
 				link = "link",
 			}
 		end
 		return ui.column { grow = true, gap = "none", class = "agent-panel",
 			ui.row { class = "agent-bar", height = 36, shrink = false, align = "center", gap = "small",
 				ui.icon { name = "bot", size = "small" },
-				ui.text { if state.page == "prompt" then "System prompt" elseif state.page == "log" then "Agent activity" else "Assistant", weight = "semibold" },
+				ui.text { if state.page == "prompt" then "Sent prompts" elseif state.page == "log" then "Agent activity" else "Assistant", weight = "semibold" },
 				ui.spacer {},
+				ui.button { "New chat", small = true, variant = "outline", tooltip = "Start a new conversation", msg = "new" },
+			},
+			ui.row { class = "agent-bar", height = 32, shrink = false, align = "center", gap = "small",
 				not state.page and ui.button { "A−", small = true, variant = "ghost", tooltip = "Decrease conversation text size", disabled = state.text_size <= MIN_TEXT_SIZE, msg = "smaller" },
 				not state.page and ui.button { "A+", small = true, variant = "ghost", tooltip = "Increase conversation text size", disabled = state.text_size >= MAX_TEXT_SIZE, msg = "larger" },
 				ui.button {
 					if state.page == "prompt" then "Back to chat" else "Prompt",
 					small = true, variant = if state.page == "prompt" then "outline" else "ghost",
-					tooltip = if state.page == "prompt" then "Back to conversation" else "Show system prompt",
+					tooltip = if state.page == "prompt" then "Back to conversation" else "Show prompts sent in this conversation",
 					msg = "prompt",
 				},
 				ui.button { icon = "list", small = true, variant = if state.page == "log" then "outline" else "ghost", tooltip = "Agent activity log", msg = "log" },
-				ui.button { icon = "square-pen", small = true, variant = "ghost", tooltip = "New conversation", msg = "new" },
 			},
 			#approvals > 0 and ui.column { gap = "small", padding = "normal", shrink = false, table.unpack(approvals) },
 			ui.column { grow = true, gap = "none", style = if state.page then nil else { font_size = state.text_size }, body },
