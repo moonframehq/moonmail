@@ -439,7 +439,7 @@ pub const TOOLS: &[Tool] = &[
     },
     Tool {
         name: "app_state",
-        about: "What the open Moonmail window shows: the view, folder, search, listed rows, selected and checked messages, the open draft, status and errors. Use it to see the effect of app_action.",
+        about: "What the open Moonmail window shows: the view, folder, search, listed rows, selected and checked messages, the pinned Correspondence or Reply Thread anchor and current page of related messages, the open draft, status and errors. Use it to see the effect of app_action.",
         effect: Effect::Show,
         params: &[],
     },
