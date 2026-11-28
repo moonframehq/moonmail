@@ -49,6 +49,14 @@ impl Mail {
         })
     }
 
+    pub(super) fn related_page(&self) -> Result<Option<moonmail_core::RelatedPage>> {
+        let archive = self.archive()?;
+        Ok(self
+            .related_query()
+            .map(|query| archive.related_page(&query, 50))
+            .transpose()?)
+    }
+
     pub(super) fn handle_relationship(&mut self, action: &str, message: &Data) -> Result<()> {
         let anchor = message
             .get("anchor")
@@ -61,9 +69,7 @@ impl Mail {
         match action {
             "related_first" => self.related_before = None,
             "related_next" => {
-                if let Some(query) = self.related_query()
-                    && let Some(next) = self.archive()?.related_page(&query, 50)?.next
-                {
+                if let Some(next) = self.related_page()?.and_then(|page| page.next) {
                     self.related_before = Some(next);
                 }
             },

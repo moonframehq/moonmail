@@ -9,6 +9,8 @@
 
 local agent_chat = use "agent-chat"
 
+local MIN_TEXT_SIZE, DEFAULT_TEXT_SIZE, MAX_TEXT_SIZE = 10, 16, 32
+
 local SUGGESTIONS = {
 	"Summarize my unread mail",
 	"What needs a reply from me?",
@@ -23,6 +25,10 @@ local function context(mail)
 	local selected = mail.selected and mail.selected.summary
 	if selected then
 		table.insert(parts, `selected message {selected.id} “{selected.subject}” from {selected.sender} <{selected.address}>`)
+	end
+	if mail.related and mail.related.anchor then
+		local tool = if mail.related_thread then "thread" else "correspondence"
+		table.insert(parts, `{tool} pane pinned to message {mail.related.anchor.id} (use {tool} with this ID for history, or app_state for the displayed page)`)
 	end
 	local checked = {}
 	for _, row in mail.rows or {} do
@@ -116,6 +122,7 @@ return mod {
 	init = function(previous)
 		local state = previous or {}
 		if type(state.generation) ~= "number" then state.generation = 1 end
+		state.text_size = math.clamp(tonumber(state.text_size) or DEFAULT_TEXT_SIZE, MIN_TEXT_SIZE, MAX_TEXT_SIZE)
 		return state
 	end,
 
@@ -125,6 +132,10 @@ return mod {
 			state.chat = nil
 			state.generation += 1
 			state.page = nil
+		elseif msg == "larger" then
+			state.text_size = math.min(MAX_TEXT_SIZE, state.text_size + 1)
+		elseif msg == "smaller" then
+			state.text_size = math.max(MIN_TEXT_SIZE, state.text_size - 1)
 		elseif msg == "log" or msg == "prompt" then
 			state.page = if state.page == msg then nil else msg
 			if state.page == "prompt" then
@@ -176,6 +187,8 @@ return mod {
 				ui.icon { name = "bot", size = "small" },
 				ui.text { if state.page == "prompt" then "System prompt" elseif state.page == "log" then "Agent activity" else "Assistant", weight = "semibold" },
 				ui.spacer {},
+				not state.page and ui.button { "A−", small = true, variant = "ghost", tooltip = "Decrease conversation text size", disabled = state.text_size <= MIN_TEXT_SIZE, msg = "smaller" },
+				not state.page and ui.button { "A+", small = true, variant = "ghost", tooltip = "Increase conversation text size", disabled = state.text_size >= MAX_TEXT_SIZE, msg = "larger" },
 				ui.button {
 					if state.page == "prompt" then "Back to chat" else "Prompt",
 					small = true, variant = if state.page == "prompt" then "outline" else "ghost",
@@ -186,7 +199,7 @@ return mod {
 				ui.button { icon = "square-pen", small = true, variant = "ghost", tooltip = "New conversation", msg = "new" },
 			},
 			#approvals > 0 and ui.column { gap = "small", padding = "normal", shrink = false, table.unpack(approvals) },
-			ui.column { grow = true, gap = "none", body },
+			ui.column { grow = true, gap = "none", style = if state.page then nil else { font_size = state.text_size }, body },
 		}
 	end,
 }
